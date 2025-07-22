@@ -1,8 +1,10 @@
-from qqtt.data import RealData, SimpleData
-from qqtt.utils import logger, visualize_pc, cfg
-from qqtt.model.diff_simulator import (
+from ..data import RealData, SimpleData
+from ..utils import logger, visualize_pc, cfg
+
+from ..model.diff_simulator import (
     SpringMassSystemWarp,
 )
+# Robot import moved to where it's used to avoid circular imports
 import open3d as o3d
 import numpy as np
 import torch
@@ -10,37 +12,32 @@ import wandb
 import os
 from tqdm import tqdm
 import warp as wp
-from scipy.spatial import KDTree
 import pickle
 import cv2
-from pynput import keyboard
-import pyrender
-import trimesh
-import matplotlib.pyplot as plt
 
-from gaussian_splatting.scene.gaussian_model import GaussianModel
-from gaussian_splatting.scene.cameras import Camera
-from gaussian_splatting.gaussian_renderer import render as render_gaussian
-from gaussian_splatting.dynamic_utils import (
+from ...gaussian_splatting.scene.gaussian_model import GaussianModel
+from ...gaussian_splatting.scene.cameras import Camera
+from ...gaussian_splatting.gaussian_renderer import render as render_gaussian
+from ...gaussian_splatting.dynamic_utils import (
     interpolate_motions_speedup,
-    knn_weights,
     knn_weights_sparse,
     get_topk_indices,
     calc_weights_vals_from_indices,
 )
-from gaussian_splatting.utils.graphics_utils import getWorld2View2, focal2fov, fov2focal
-from gs_render import (
+from ...gaussian_splatting.utils.graphics_utils import focal2fov
+from ...gs_render import (
     remove_gaussians_with_low_opacity,
-    remove_gaussians_with_point_mesh_distance,
 )
-from gaussian_splatting.rotation_utils import quaternion_multiply, matrix_to_quaternion
+from ...gaussian_splatting.rotation_utils import quaternion_multiply, matrix_to_quaternion
+from ...paths import ASSETS_ROOT
 
 from sklearn.cluster import KMeans
 import copy
-import time
-import threading
-import time
+import matplotlib.pyplot as plt
 
+from GNN.model.rollout import Rollout
+from GNN.utils import visualize_edges, fps_rad_tensor, construct_edges_from_tensor
+from shared.utils import save_object_and_robot
 
 class InvPhyTrainerWarp:
     def __init__(
@@ -53,16 +50,26 @@ class InvPhyTrainerWarp:
         pure_inference_mode=False,
         device="cuda:0",
         static_meshes=None,
-        robot=None,
+        robot_controller=None,
+        include_gaussian=False,
     ):
         cfg.data_path = data_path
         cfg.base_dir = base_dir
         cfg.device = device
         cfg.run_name = base_dir.split("/")[-1]
         cfg.train_frame = train_frame
+        
+        # Set warp device for multiprocessing compatibility
+        # Extract device index for warp (e.g., "cuda:0" -> 0)
+        if ":" in device:
+            device_idx = int(device.split(":")[-1])
+        else:
+            device_idx = 0
+        wp.set_device(f"cuda:{device_idx}")
 
         self.init_masks = None
         self.init_velocities = None
+        self.include_gaussian = include_gaussian
         # Load the data
         if cfg.data_type == "real":
             self.dataset = RealData(visualize=False, save_gt=False)
@@ -124,53 +131,15 @@ class InvPhyTrainerWarp:
 
         self.static_meshes = static_meshes
         if static_meshes is not None:
-            if robot is not None:
-                # Extract the dynamic meshes from the robot
-                self.robot = robot
-                finger_meshes = self.robot.get_finger_mesh(1.0)
-                self.dynamic_meshes = finger_meshes
-                self.num_dynamic = len(self.dynamic_meshes)
-                dynamic_vertices = [
-                    np.asarray(finger_mesh.vertices) for finger_mesh in finger_meshes
-                ]
-                new_vertices = np.concatenate(dynamic_vertices, axis=0)
-                new_vertices = torch.tensor(
-                    new_vertices, dtype=torch.float32, device=cfg.device
-                )
-                self.dynamic_points = new_vertices
+            if robot_controller is not None:
+                # Use provided robot controller
+                self.robot_controller = robot_controller
+                # Create protected copies of robot data
+                self.dynamic_meshes = self.robot_controller.robot_loader.get_finger_mesh(self.robot_controller.current_finger)
             else:
                 self.dynamic_meshes = []
-                self.dynamic_points = None
 
-        self.simulator = SpringMassSystemWarp(
-            self.init_vertices,
-            self.init_springs,
-            self.init_rest_lengths,
-            self.init_masses,
-            dt=cfg.dt,
-            num_substeps=cfg.num_substeps,
-            spring_Y=cfg.init_spring_Y,
-            collide_elas=cfg.collide_elas,
-            collide_fric=cfg.collide_fric,
-            dashpot_damping=cfg.dashpot_damping,
-            drag_damping=cfg.drag_damping,
-            collide_object_elas=cfg.collide_object_elas,
-            collide_object_fric=cfg.collide_object_fric,
-            init_masks=self.init_masks,
-            collision_dist=cfg.collision_dist,
-            init_velocities=self.init_velocities,
-            num_object_points=self.num_all_points,
-            num_surface_points=self.num_surface_points,
-            num_original_points=self.num_original_points,
-            controller_points=self.controller_points,
-            reverse_z=cfg.reverse_z,
-            spring_Y_min=cfg.spring_Y_min,
-            spring_Y_max=cfg.spring_Y_max,
-            gt_object_points=self.object_points,
-            gt_object_visibilities=self.object_visibilities,
-            gt_object_motions_valid=self.object_motions_valid,
-            self_collision=cfg.self_collision,
-        )
+        self.simulator = None  # Will be initialized in initialize_simulator
 
         if not pure_inference_mode:
             self.optimizer = torch.optim.Adam(
@@ -202,6 +171,63 @@ class InvPhyTrainerWarp:
             if not os.path.exists(f"{cfg.base_dir}/train"):
                 # Create directory if it doesn't exist
                 os.makedirs(f"{cfg.base_dir}/train")
+
+    def initialize_simulator(self, model_path):
+        """One-time initialization of the simulator with correct spring configuration"""
+        # Load the model parameters
+        logger.info(f"Load model from {model_path}")
+        checkpoint = torch.load(model_path, map_location=cfg.device)
+        spring_Y = checkpoint["spring_Y"]
+        collide_elas = checkpoint["collide_elas"]
+        collide_fric = checkpoint["collide_fric"]
+        collide_object_elas = checkpoint["collide_object_elas"]
+        collide_object_fric = checkpoint["collide_object_fric"]
+
+        spring_Y = spring_Y[: self.num_object_springs]
+        self.init_springs = self.init_springs[: self.num_object_springs]
+        self.init_rest_lengths = self.init_rest_lengths[: self.num_object_springs]
+        self.init_vertices = self.init_vertices[: self.num_all_points]
+        self.init_masses = self.init_masses[: self.num_all_points]
+        self.controller_points = None
+
+        
+        # Create simulator with full spring configuration
+        self.simulator = SpringMassSystemWarp(
+            self.init_vertices,
+            self.init_springs,
+            self.init_rest_lengths,
+            self.init_masses,
+            dt=cfg.dt,
+            num_substeps=cfg.num_substeps,
+            spring_Y=cfg.init_spring_Y,
+            collide_elas=cfg.collide_elas,
+            collide_fric=cfg.collide_fric,
+            dashpot_damping=cfg.dashpot_damping,
+            drag_damping=cfg.drag_damping,
+            collide_object_elas=cfg.collide_object_elas,
+            collide_object_fric=cfg.collide_object_fric,
+            init_masks=self.init_masks,
+            collision_dist=cfg.collision_dist,
+            init_velocities=self.init_velocities,
+            num_object_points=self.num_all_points,
+            num_surface_points=self.num_surface_points,
+            num_original_points=self.num_original_points,
+            controller_points=None,  # Will be set during simulation
+            reverse_z=cfg.reverse_z,
+            spring_Y_min=cfg.spring_Y_min,
+            spring_Y_max=cfg.spring_Y_max,
+            gt_object_points=self.object_points,
+            gt_object_visibilities=self.object_visibilities,
+            gt_object_motions_valid=self.object_motions_valid,
+            self_collision=cfg.self_collision,
+            static_meshes=self.dynamic_meshes + self.static_meshes,
+            dynamic_points=self.robot_controller.dynamic_points,
+        )
+        
+        # Set the optimized parameters
+        self.simulator.set_spring_Y(torch.log(spring_Y).detach().clone())
+        self.simulator.set_collide(collide_elas.detach().clone(), collide_fric.detach().clone())
+        self.simulator.set_collide_object(collide_object_elas.detach().clone(), collide_object_fric.detach().clone())
 
     def _init_start(
         self,
@@ -627,12 +653,12 @@ class InvPhyTrainerWarp:
         self.arrow_size = 30
 
         self.arrow_empty_orig = cv2.imread(
-            "./assets/arrow_empty.png", cv2.IMREAD_UNCHANGED
+            str(ASSETS_ROOT / "arrow_empty.png"), cv2.IMREAD_UNCHANGED
         )[:, :, [2, 1, 0, 3]]
-        self.arrow_1_orig = cv2.imread("./assets/arrow_1.png", cv2.IMREAD_UNCHANGED)[
+        self.arrow_1_orig = cv2.imread(str(ASSETS_ROOT / "arrow_1.png"), cv2.IMREAD_UNCHANGED)[
             :, :, [2, 1, 0, 3]
         ]
-        self.arrow_2_orig = cv2.imread("./assets/arrow_2.png", cv2.IMREAD_UNCHANGED)[
+        self.arrow_2_orig = cv2.imread(str(ASSETS_ROOT / "arrow_2.png"), cv2.IMREAD_UNCHANGED)[
             :, :, [2, 1, 0, 3]
         ]
 
@@ -704,10 +730,10 @@ class InvPhyTrainerWarp:
             ),  # Down
         }
 
-        self.hand_left = cv2.imread("./assets/Picture2.png", cv2.IMREAD_UNCHANGED)[
+        self.hand_left = cv2.imread(str(ASSETS_ROOT / "Picture2.png"), cv2.IMREAD_UNCHANGED)[
             :, :, [2, 1, 0, 3]
         ]
-        self.hand_right = cv2.imread("./assets/Picture1.png", cv2.IMREAD_UNCHANGED)[
+        self.hand_right = cv2.imread(str(ASSETS_ROOT / "Picture1.png"), cv2.IMREAD_UNCHANGED)[
             :, :, [2, 1, 0, 3]
         ]
 
@@ -973,389 +999,82 @@ class InvPhyTrainerWarp:
 
         return result
 
-    def _find_closest_point(self, target_points):
-        """Find the closest structure point to any of the target points."""
-        dist_matrix = torch.sum(
-            (target_points.unsqueeze(1) - self.structure_points.unsqueeze(0)) ** 2,
-            dim=2,
-        )
-        min_dist_per_ctrl_pts, min_indices = torch.min(dist_matrix, dim=1)
-        min_idx = min_indices[torch.argmin(min_dist_per_ctrl_pts)]
-        return self.structure_points[min_idx].unsqueeze(0)
-
-    def interactive_playground(
-        self, model_path, gs_path, n_ctrl_parts=1, inv_ctrl=False, virtual_key_input=False
-    ):
-        # Load the model
-        logger.info(f"Load model from {model_path}")
-        checkpoint = torch.load(model_path, map_location=cfg.device)
-
-        spring_Y = checkpoint["spring_Y"]
-        collide_elas = checkpoint["collide_elas"]
-        collide_fric = checkpoint["collide_fric"]
-        collide_object_elas = checkpoint["collide_object_elas"]
-        collide_object_fric = checkpoint["collide_object_fric"]
-        num_object_springs = checkpoint["num_object_springs"]
-
-        assert (
-            len(spring_Y) == self.simulator.n_springs
-        ), "Check if the loaded checkpoint match the config file to connect the springs"
-
-        self.simulator.set_spring_Y(torch.log(spring_Y).detach().clone())
-        self.simulator.set_collide(
-            collide_elas.detach().clone(), collide_fric.detach().clone()
-        )
-        self.simulator.set_collide_object(
-            collide_object_elas.detach().clone(),
-            collide_object_fric.detach().clone(),
-        )
-
-        ###########################################################################
-
-        logger.info("Party Time Start!!!!")
-        self.simulator.set_init_state(
-            self.simulator.wp_init_vertices, self.simulator.wp_init_velocities
-        )
-        prev_x = wp.to_torch(
-            self.simulator.wp_states[0].wp_x, requires_grad=False
-        ).clone()
-
-        vis_cam_idx = 0
-        FPS = cfg.FPS
-        width, height = cfg.WH
-        intrinsic = cfg.intrinsics[vis_cam_idx]
-        w2c = cfg.w2cs[vis_cam_idx]
-
-        current_target = self.simulator.controller_points[0]
-        prev_target = current_target
-
-        vis_controller_points = current_target.cpu().numpy()
-
-        gaussians = GaussianModel(sh_degree=3)
-        gaussians.load_ply(gs_path)
-        gaussians = remove_gaussians_with_low_opacity(gaussians, 0.1)
-        gaussians.isotropic = True
-        current_pos = gaussians.get_xyz
-        current_rot = gaussians.get_rotation
-        use_white_background = True  # set to True for white background
-        bg_color = [1, 1, 1] if use_white_background else [0, 0, 0]
-        background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
-        view = self._create_gs_view(w2c, intrinsic, height, width)
-        prev_x = None
-        relations = None
-        weights = None
-        image_path = cfg.bg_img_path
-        overlay = cv2.imread(image_path)
-        overlay = cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB)
-        overlay = torch.tensor(overlay, dtype=torch.float32, device=cfg.device)
-
-        if n_ctrl_parts > 1:
-            kmeans = KMeans(n_clusters=n_ctrl_parts, random_state=0, n_init=10)
-            cluster_labels = kmeans.fit_predict(vis_controller_points)
-            N = vis_controller_points.shape[0]
-            masks_ctrl_pts = []
-            for i in range(n_ctrl_parts):
-                mask = cluster_labels == i
-                masks_ctrl_pts.append(torch.from_numpy(mask))
-            # project the center of the cluster to the object to the image space, those on the left will be mask 1
-            center1 = np.mean(vis_controller_points[masks_ctrl_pts[0]], axis=0)
-            center2 = np.mean(vis_controller_points[masks_ctrl_pts[1]], axis=0)
-            center1 = np.concatenate([center1, [1]])
-            center2 = np.concatenate([center2, [1]])
-            proj_mat = intrinsic @ w2c[:3, :]
-            center1 = proj_mat @ center1
-            center2 = proj_mat @ center2
-            center1 = center1 / center1[-1]
-            center2 = center2 / center2[-1]
-            if center1[0] > center2[0]:
-                print("Switching the control parts")
-                masks_ctrl_pts = [masks_ctrl_pts[1], masks_ctrl_pts[0]]
-        else:
-            masks_ctrl_pts = None
+    def generate_data(self, model_path, action_function, gs_path, n_ctrl_parts=1, data_file_path=None, episode_id=0):
+        # Initialize control parts
         self.n_ctrl_parts = n_ctrl_parts
-        self.mask_ctrl_pts = masks_ctrl_pts
-        self.scale_factors = 1.0
-        assert n_ctrl_parts <= 2, "Only support 1 or 2 control parts"
-        print("UI Controls:")
-        print("- Set 1: WASD (XY movement), QE (Z movement)")
-        print("- Set 2: IJKL (XY movement), UO (Z movement)")
-        self.inv_ctrl = -1.0 if inv_ctrl else 1.0
-        self.key_mappings = {
-            # Set 1 controls
-            "w": (0, np.array([0.005, 0, 0]) * self.inv_ctrl),
-            "s": (0, np.array([-0.005, 0, 0]) * self.inv_ctrl),
-            "a": (0, np.array([0, -0.005, 0]) * self.inv_ctrl),
-            "d": (0, np.array([0, 0.005, 0]) * self.inv_ctrl),
-            "e": (0, np.array([0, 0, 0.005])),
-            "q": (0, np.array([0, 0, -0.005])),
-            # Set 2 controls
-            "i": (1, np.array([0.005, 0, 0]) * self.inv_ctrl),
-            "k": (1, np.array([-0.005, 0, 0]) * self.inv_ctrl),
-            "j": (1, np.array([0, -0.005, 0]) * self.inv_ctrl),
-            "l": (1, np.array([0, 0.005, 0]) * self.inv_ctrl),
-            "o": (1, np.array([0, 0, 0.005])),
-            "u": (1, np.array([0, 0, -0.005])),
-        }
-        self.pressed_keys = set()
-        self.w2c = w2c
-        self.intrinsic = intrinsic
-        self.init_control_ui()
-        if n_ctrl_parts > 1:
-            hand_positions = []
-            for i in range(2):
-                target_points = torch.from_numpy(
-                    vis_controller_points[self.mask_ctrl_pts[i]]
-                ).to("cuda")
-                hand_positions.append(self._find_closest_point(target_points))
-            self.hand_left_pos, self.hand_right_pos = hand_positions
-        else:
-            target_points = torch.from_numpy(vis_controller_points).to("cuda")
-            self.hand_left_pos = self._find_closest_point(target_points)
+        initial_translation, target_changes, initial_finger, finger_changes = action_function(
+            self.init_vertices, self.robot_controller, self.n_ctrl_parts
+        )
 
-        if virtual_key_input:
-            # Initialize keyboard tracking variables
-            self.virtual_keys = {}     # Dictionary to track virtual keys with timestamps
-            self.virtual_key_duration = 0.03  # Virtual key press duration in seconds
+        # Update robot position using the new controller system
+        self.robot_controller.quick_robot_movement(
+            target_change=initial_translation,
+            current_finger=initial_finger,
+            rot_change=None
+        )
+        # Update protected copies after robot movement
+        self._update_robot_visualization()
+
+        self.initialize_simulator(model_path)
+            
+        # Reset simulator state
+        self.simulator.set_init_state(
+            self.simulator.wp_init_vertices,
+            self.simulator.wp_init_velocities
+        )
         
-        listener = keyboard.Listener(on_press=self.on_press, on_release=self.on_release)
-        listener.start()
-        self.target_change = np.zeros((n_ctrl_parts, 3))
+        # set robot position and movement parameters
+        n_frames = target_changes.shape[0]
+        rot_changes = np.zeros((n_frames, 3), dtype=np.float32)
+        
+        logger.info("Starting data generation")
 
-        ############## Temporary timer ##############
-        import time
+        if self.include_gaussian:
+            gaussians = GaussianModel(sh_degree=3)
+            gaussians.load_ply(gs_path)
+            gaussians = remove_gaussians_with_low_opacity(gaussians, 0.1)
+            gaussians.isotropic = True
+            current_pos = gaussians.get_xyz
+            current_rot = gaussians.get_rotation
+            prev_x = None
+            relations = None
+            weights = None
+        else:
+            gaussians = None
+            prev_x = None
 
-        class Timer:
-            def __init__(self, name):
-                self.name = name
-                self.elapsed = 0
-                self.start_time = None
-                self.cuda_start_event = None
-                self.cuda_end_event = None
-                self.use_cuda = torch.cuda.is_available()
 
-            def start(self):
-                if self.use_cuda:
-                    torch.cuda.synchronize()
-                    self.cuda_start_event = torch.cuda.Event(enable_timing=True)
-                    self.cuda_end_event = torch.cuda.Event(enable_timing=True)
-                    self.cuda_start_event.record()
-                self.start_time = time.time()
-
-            def stop(self):
-                if self.use_cuda:
-                    self.cuda_end_event.record()
-                    torch.cuda.synchronize()
-                    self.elapsed = (
-                        self.cuda_start_event.elapsed_time(self.cuda_end_event) / 1000
-                    )  # convert ms to seconds
-                else:
-                    self.elapsed = time.time() - self.start_time
-                return self.elapsed
-
-            def reset(self):
-                self.elapsed = 0
-                self.start_time = None
-                self.cuda_start_event = None
-                self.cuda_end_event = None
-
-        sim_timer = Timer("Simulator")
-        render_timer = Timer("Rendering")
-        frame_timer = Timer("Frame Compositing")
-        interp_timer = Timer("Full Motion Interpolation")
-        total_timer = Timer("Total Loop")
-        knn_weights_timer = Timer("KNN Weights")
-        motion_interp_timer = Timer("Motion Interpolation")
-
-        # Performance stats
-        fps_history = []
-        component_times = {
-            "simulator": [],
-            "rendering": [],
-            "frame_compositing": [],
-            "full_motion_interpolation": [],
-            "total": [],
-            "knn_weights": [],
-            "motion_interp": [],
-        }
-
-        # Number of frames to average over for stats
-        STATS_WINDOW = 10
+        # Initialize storage for all frames
         frame_count = 0
+        object_frames = []
+        robot_frames = []
+        gaussians_frames = [] if self.include_gaussian else None
 
-        ############## End Temporary timer ##############
-        if self.static_meshes is not None:
-            vis = o3d.visualization.Visualizer()
-            vis.create_window(visible=False, width=width, height=height)
-            render_option = vis.get_render_option()
-            render_option.point_size = 10.0
-
-            for static_mesh in self.static_meshes:
-                vis.add_geometry(static_mesh)
-
-            x_vis = wp.to_torch(
-                self.simulator.wp_states[0].wp_x, requires_grad=False
-            ).clone()
-            object_pcd = o3d.geometry.PointCloud()
-            object_pcd.points = o3d.utility.Vector3dVector(x_vis.cpu().numpy())
-            # object_pcd.paint_uniform_color([1, 0, 0])
-            object_pcd.paint_uniform_color([1, 1, 1])
-            vis.add_geometry(object_pcd)
-
-            # o3d.visualization.draw_geometries([object_pcd] + self.static_meshes)
-
-            view_control = vis.get_view_control()
-            camera_params = o3d.camera.PinholeCameraParameters()
-            intrinsic_parameter = o3d.camera.PinholeCameraIntrinsic(
-                width, height, intrinsic
-            )
-            camera_params.intrinsic = intrinsic_parameter
-            camera_params.extrinsic = w2c
-            view_control.convert_from_pinhole_camera_parameters(
-                camera_params, allow_arbitrary=True
-            )
-
-            # vis_image = np.asarray(vis.capture_screen_float_buffer(do_render=True))
-            # cv2.imshow("test", vis_image)
-            # cv2.waitKey(0)
-
-        while True:
-
-            total_timer.start()
-
+        for i in range(n_frames):
             # 1. Simulator step
-
-            sim_timer.start()
-
-            self.simulator.set_controller_interactive(prev_target, current_target)
             if self.simulator.object_collision_flag:
                 self.simulator.update_collision_graph()
             wp.capture_launch(self.simulator.forward_graph)
             x = wp.to_torch(self.simulator.wp_states[-1].wp_x, requires_grad=False)
+            collision_forces = wp.to_torch(
+                self.simulator.collision_forces, requires_grad=False
+            )
             # Set the intial state for the next step
             self.simulator.set_init_state(
                 self.simulator.wp_states[-1].wp_x,
                 self.simulator.wp_states[-1].wp_v,
             )
 
-            sim_time = sim_timer.stop()
-            component_times["simulator"].append(sim_time)
-
-            torch.cuda.synchronize()
-
-            # 2. Frame initialization and setup
-
-            frame_timer.start()
-
-            frame = overlay.clone()
-
-            frame_setup_time = (
-                frame_timer.stop()
-            )  # We'll accumulate times for frame compositing
-
-            torch.cuda.synchronize()
-
-            # 3. Rendering
-            render_timer.start()
-
-            # render with gaussians and paste the image on top of the frame
-            results = render_gaussian(view, gaussians, None, background)
-            rendering = results["render"]  # (4, H, W)
-            image = rendering.permute(1, 2, 0).detach()
-
-            render_time = render_timer.stop()
-            component_times["rendering"].append(render_time)
-
-            torch.cuda.synchronize()
-
-            # Continue frame compositing
-            frame_timer.start()
-
-            image = image.clamp(0, 1)
-            if use_white_background:
-                image_mask = torch.logical_and(
-                    (image != 1.0).any(dim=2), image[:, :, 3] > 100 / 255
-                )
-            else:
-                image_mask = torch.logical_and(
-                    (image != 0.0).any(dim=2), image[:, :, 3] > 100 / 255
-                )
-            image[..., 3].masked_fill_(~image_mask, 0.0)
-
-            alpha = image[..., 3:4]
-            rgb = image[..., :3] * 255
-            frame = alpha * rgb + (1 - alpha) * frame
-            frame = frame.cpu().numpy()
-            image_mask = image_mask.cpu().numpy()
-            frame = frame.astype(np.uint8)
-
-            if self.static_meshes is not None:
-                # Update with the visualziation of static meshes
-                x_vis = x.clone()
-                object_pcd.points = o3d.utility.Vector3dVector(x_vis.cpu().numpy())
-                vis.update_geometry(object_pcd)
-                vis.poll_events()
-                vis.update_renderer()
-                static_image = np.asarray(
-                    vis.capture_screen_float_buffer(do_render=True)
-                )
-                # cv2.imshow("test", static_image)
-                # cv2.waitKey(1)
-                static_image = (static_image * 255).astype(np.uint8)
-                static_vis_mask = np.all(static_image == [255, 255, 255], axis=-1)
-                frame[~static_vis_mask] = static_image[~static_vis_mask]
-
-            frame = self.update_frame(frame, self.pressed_keys)
-
-            # Add shadows
-            final_shadow = get_simple_shadow(
-                x, intrinsic, w2c, width, height, image_mask, light_point=[0, 0, -3]
-            )
-            frame[final_shadow] = (frame[final_shadow] * 0.95).astype(np.uint8)
-            final_shadow = get_simple_shadow(
-                x, intrinsic, w2c, width, height, image_mask, light_point=[1, 0.5, -2]
-            )
-            frame[final_shadow] = (frame[final_shadow] * 0.97).astype(np.uint8)
-            final_shadow = get_simple_shadow(
-                x, intrinsic, w2c, width, height, image_mask, light_point=[-3, -0.5, -5]
-            )
-            frame[final_shadow] = (frame[final_shadow] * 0.98).astype(np.uint8)
-            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-
-            cv2.imshow("Interactive Playground", frame)
-            key = cv2.waitKey(1)
-
-            if virtual_key_input:
-                # Handle virtual keyboard input through OpenCV window
-                if key != -1:
-                    key_char = chr(key & 0xFF).lower()
-                    if key_char in self.key_mappings:
-                        # Store virtual key with timestamp - refresh timestamp if already pressed
-                        self.virtual_keys[key_char] = time.time()
-                        self.pressed_keys.add(key_char)
-                    elif key == 27:  # ESC key to exit
-                        break
-                
-                # Process all keyboard inputs (both physical and virtual)
-                # For virtual keys, check if they're still active based on timestamp
-                current_time = time.time()
-                keys_to_remove = []
-                for k, press_time in self.virtual_keys.items():
-                    if current_time - press_time > self.virtual_key_duration:
-                        keys_to_remove.append(k)
-                
-                # Remove expired virtual keys
-                for k in keys_to_remove:
-                    if k in self.pressed_keys:
-                        self.pressed_keys.discard(k)
-                    if k in self.virtual_keys:
-                        del self.virtual_keys[k]
-            
-            frame_comp_time = (
-                frame_timer.stop() + frame_setup_time
-            )  # Total frame compositing time
-            component_times["frame_compositing"].append(frame_comp_time)
-
-            torch.cuda.synchronize()
+            # Store first frame data
+            if frame_count == 0:
+                object_frames.append(x.detach().cpu())
+                robot_frames.append(self.robot_controller.dynamic_points.detach().cpu())
+                if self.include_gaussian:
+                    gaussians_frames.append({
+                        'xyz': gaussians._xyz,
+                        'rotation': gaussians._rotation,
+                        'frame_count': frame_count
+                    })
 
             if prev_x is not None:
                 with torch.no_grad():
@@ -1372,8 +1091,6 @@ class InvPhyTrainerWarp:
                         weights, weights_indices = knn_weights_sparse(
                             prev_particle_pos, current_pos, K=16
                         )  # only computed in the first iteration
-
-                    interp_timer.start()
 
                     weights = calc_weights_vals_from_indices(
                         prev_particle_pos, current_pos, weights_indices
@@ -1393,91 +1110,47 @@ class InvPhyTrainerWarp:
                     gaussians._xyz = current_pos
                     gaussians._rotation = current_rot
 
-                interp_time = interp_timer.stop()
-                component_times["full_motion_interpolation"].append(interp_time)
+            if self.include_gaussian:
+                prev_x = x.clone()
 
-            torch.cuda.synchronize()
-
-            prev_x = x.clone()
-
-            prev_target = current_target
-            target_change = self.get_target_change()
-            if masks_ctrl_pts is not None:
-                for i in range(n_ctrl_parts):
-                    if masks_ctrl_pts[i].sum() > 0:
-                        current_target[masks_ctrl_pts[i]] += torch.tensor(
-                            target_change[i], dtype=torch.float32, device=cfg.device
-                        )
-                        if i == 0:
-                            self.hand_left_pos += torch.tensor(
-                                target_change[i], dtype=torch.float32, device=cfg.device
-                            )
-                        if i == 1:
-                            self.hand_right_pos += torch.tensor(
-                                target_change[i], dtype=torch.float32, device=cfg.device
-                            )
-            else:
-                current_target += torch.tensor(
-                    target_change, dtype=torch.float32, device=cfg.device
-                )
-                self.hand_left_pos += torch.tensor(
-                    target_change, dtype=torch.float32, device=cfg.device
-                )
-
-            ############### Temporary timer ###############
-            # Total loop time
-            total_time = total_timer.stop()
-            component_times["total"].append(total_time)
-
-            # Calculate FPS
-            fps = 1.0 / total_time
-            fps_history.append(fps)
-
-            # Display performance stats periodically
+            # =====================robot stuff=====================
+            # Update robot movement using the controller
+            movement_result = self.robot_controller.fine_robot_movement(
+                target_change=torch.tensor(target_changes[i], dtype=torch.float32, device=self.robot_controller.device),
+                collision_forces=collision_forces,
+                finger_change=finger_changes[i],
+                rot_change=torch.tensor(rot_changes[i], dtype=torch.float32, device=self.robot_controller.device)
+            )
+            
+            # Update protected copies after robot movement
+            self._update_robot_visualization()
+            
+            # Update the simulator with the gripper changes
+            self.simulator.set_mesh_interactive(
+                movement_result['interpolated_dynamic_points'],
+                movement_result['interpolated_center'],
+                movement_result['dynamic_velocity'],
+                movement_result['dynamic_omega'],
+            )
             frame_count += 1
-            if frame_count % 10 == 0:
-                # Limit stats to last STATS_WINDOW frames
-                if len(fps_history) > STATS_WINDOW:
-                    fps_history = fps_history[-STATS_WINDOW:]
-                    for key in component_times:
-                        component_times[key] = component_times[key][-STATS_WINDOW:]
 
-                avg_fps = np.mean(fps_history)
-                print(
-                    f"\n--- Performance Stats (avg over last {len(fps_history)} frames) ---"
-                )
-                print(f"FPS: {avg_fps:.2f}")
+            # Store frame data
+            object_frames.append(x.detach().cpu())
+            robot_frames.append(self.robot_controller.dynamic_points.detach().cpu())
+            if self.include_gaussian:
+                gaussians_frames.append({
+                    'xyz': gaussians._xyz,
+                    'rotation': gaussians._rotation,
+                    'frame_count': frame_count
+                })
 
-                # Calculate percentages for pie chart
-                total_avg = np.mean(component_times["total"])
-                print(f"Total Frame Time: {total_avg*1000:.2f} ms")
+        # Save all collected data to the shared HDF5 file
+        from ..utils.misc import save_episode_data
+        save_episode_data(data_file_path, episode_id, object_frames, robot_frames, self.include_gaussian, gaussians_frames)
 
-                # Display individual component times
-                for key in [
-                    "simulator",
-                    "rendering",
-                    "frame_compositing",
-                    "full_motion_interpolation",
-                    "knn_weights",
-                    "motion_interp",
-                ]:
-                    avg_time = np.mean(component_times[key])
-                    percentage = (avg_time / total_avg) * 100
-                    print(
-                        f"{key.capitalize()}: {avg_time*1000:.2f} ms ({percentage:.1f}%)"
-                    )
-                total_energy = calculate_energy(
-                    prev_x,
-                    spring_Y,
-                    self.init_springs,
-                    self.init_rest_lengths,
-                    num_object_springs,
-                )
-                print(f"Energy: {total_energy:.2f}")
+    def interactive_robot(self, model_path, gs_path, n_ctrl_parts=1, inv_ctrl=False, gnn_model=None, gnn_config=None):
+        from pynput import keyboard
 
-        listener.stop()
-
-    def interactive_robot(self, model_path, gs_path, n_ctrl_parts=1, inv_ctrl=False, virtual_key_input=False):
         # Load the model
         logger.info(f"Load model from {model_path}")
         checkpoint = torch.load(model_path, map_location=cfg.device)
@@ -1488,10 +1161,6 @@ class InvPhyTrainerWarp:
         collide_object_elas = checkpoint["collide_object_elas"]
         collide_object_fric = checkpoint["collide_object_fric"]
         num_object_springs = checkpoint["num_object_springs"]
-
-        assert (
-            len(spring_Y) == self.simulator.n_springs
-        ), "Check if the loaded checkpoint match the config file to connect the springs"
 
         spring_Y = spring_Y[: self.num_object_springs]
         self.init_springs = self.init_springs[: self.num_object_springs]
@@ -1529,8 +1198,12 @@ class InvPhyTrainerWarp:
             gt_object_motions_valid=self.object_motions_valid,
             self_collision=cfg.self_collision,
             static_meshes=self.dynamic_meshes + self.static_meshes,
-            dynamic_points=self.dynamic_points,
+            dynamic_points=self.robot_controller.dynamic_points,
         )
+
+        assert (
+            len(spring_Y) == self.simulator.n_springs
+        ), "Check if the loaded checkpoint match the config file to connect the springs"
 
         self.simulator.set_spring_Y(torch.log(spring_Y).detach().clone())
         self.simulator.set_collide(
@@ -1579,6 +1252,7 @@ class InvPhyTrainerWarp:
         print("UI Controls:")
         print("- Set 1: WASD (XY movement), QE (Z movement)")
         print("- Set 2: IJKL (XY movement), UO (Z movement)")
+        print("- 6: Save current object point cloud as target")
         self.inv_ctrl = -1.0 if inv_ctrl else 1.0
         self.key_mappings = {
             # Set 1 controls
@@ -1603,20 +1277,20 @@ class InvPhyTrainerWarp:
             "x": [0, 0, -2.0 / 180 * np.pi],
             "c": [2.0 / 180 * np.pi, 0, 0],
             "v": [-2.0 / 180 * np.pi, 0, 0],
+            # Save target snapshot
+            # "6": "save_target_snapshot",
         }
         self.pressed_keys = set()
         self.w2c = w2c
         self.intrinsic = intrinsic
         self.init_control_ui()
 
-        if virtual_key_input:
-            # Initialize keyboard tracking variables
-            self.virtual_keys = {}     # Dictionary to track virtual keys with timestamps
-            self.virtual_key_duration = 0.03  # Virtual key press duration in seconds
-
         listener = keyboard.Listener(on_press=self.on_press, on_release=self.on_release)
         listener.start()
         self.target_change = np.zeros((n_ctrl_parts, 3))
+        
+        # Initialize snapshot cooldown counter
+        self.snapshot_cooldown = 0
 
         ############## Temporary timer ##############
         import time
@@ -1700,7 +1374,7 @@ class InvPhyTrainerWarp:
             object_pcd.paint_uniform_color([0, 0, 1])
             # object_pcd.paint_uniform_color([1, 1, 1])
             vis.add_geometry(object_pcd)
-
+            
             # o3d.visualization.draw_geometries([object_pcd] + self.static_meshes)
 
             view_control = vis.get_view_control()
@@ -1718,21 +1392,101 @@ class InvPhyTrainerWarp:
             # cv2.imshow("test", vis_image)
             # cv2.waitKey(0)
 
-        accumulate_trans = np.zeros((n_ctrl_parts, 3))
-        accumulate_rot = torch.eye(3, dtype=torch.float32, device=cfg.device)
+        # Initialize GNN rollout if provided
+        gnn_rollout = None
+        gnn_x = None
+        robot_positions_history = []
+        gnn_obj_pcd = None
+        gnn_robot_pcd = None
+        gnn_line_sets = []
+        
+        if gnn_model is not None and gnn_config is not None:
+            logger.info("Initializing GNN rollout for comparison")
+            
+            # Get initial positions
+            initial_x = wp.to_torch(self.simulator.wp_states[0].wp_x, requires_grad=False).clone()
+            object_indices = fps_rad_tensor(initial_x[:self.num_all_points], gnn_config['train']['particle']['fps_radius'])
+            robot_indices = fps_rad_tensor(self.robot_controller.dynamic_points, gnn_config['train']['particle']['fps_radius']) 
 
-        self.dynamic_vertices = [
-            np.asarray(finger_mesh.vertices) for finger_mesh in self.dynamic_meshes
-        ]
+            n_history = gnn_config['train']['n_history']
+            
+            # Total particles (object + robot)
+            n_object_particles = len(object_indices)
+            n_robot_particles = len(robot_indices)
+            total_particles = n_object_particles + n_robot_particles
+            
+            # Create initial state by concatenating object and robot positions
+            initial_positions = torch.cat([initial_x[object_indices], self.robot_controller.dynamic_points[robot_indices]], dim=0)
+            
+            initial_states = initial_positions.unsqueeze(0) # [1, particles, 3]
 
-        origin_force_judge = torch.tensor(
-            [[-1, 0, 0], [1, 0, 0]], dtype=torch.float32, device=cfg.device
-        )
-        current_force_judge = origin_force_judge.clone()
-        current_trans_dynamic_points = self.dynamic_points
-        current_finger = 1.0
-        close_flag = True
-        is_closing = False
+            # Initialize deltas to zero [1, n_history-1, particles, 3]
+            initial_deltas = torch.zeros(1, n_history-1, total_particles, 3, device=cfg.device)
+            
+            # Initialize attributes: 0 for object, 1 for robot [1, particles]
+            initial_attrs = torch.zeros(1, total_particles, device=cfg.device)
+            initial_attrs[:, n_object_particles:] = 1.0  # Robot particles
+            
+            # Particle numbers [1]
+            particle_nums = torch.tensor([total_particles], device=cfg.device)
+            
+            # Construct topological edges if enabled
+            if gnn_config['train']['edges']['topological']['enabled']:
+                adj_thresh = gnn_config['train']['edges']['topological']['adj_thresh']
+                topk = gnn_config['train']['edges']['topological']['topk']
+                
+                # Construct topological edges using first frame positions
+                adj_matrix = construct_edges_from_tensor(initial_x[object_indices], adj_thresh, topk)
+                topological_edges = torch.zeros(1, total_particles, total_particles, device=cfg.device)
+                topological_edges[0, :n_object_particles, :n_object_particles] = adj_matrix.unsqueeze(0)  # [1, particles, particles]
+                logger.info(f"Constructed topological edges with adj_thresh={adj_thresh}, topk={topk}")
+            else:
+                # Initialize as zero matrix for compatibility
+                topological_edges = torch.zeros(1, total_particles, total_particles, device=cfg.device)
+                logger.info("Topological edges disabled in config - initialized as zero matrix")
+            
+            # Initialize rollout
+            gnn_rollout = Rollout(
+                gnn_model, 
+                gnn_config, 
+                initial_states, 
+                initial_deltas, 
+                initial_attrs, 
+                particle_nums,
+                topological_edges=topological_edges,
+                first_states=initial_states[-1:]
+            )
+            
+            # Initialize GNN prediction with first frame
+            gnn_x = initial_positions.clone()
+
+            downsample_rate = gnn_config['dataset']['downsample_rate']
+            
+            logger.info(f"GNN rollout initialized with {n_object_particles} object + {n_robot_particles} robot particles")
+
+            # Object particles in green
+            gnn_obj_pcd = o3d.geometry.PointCloud()
+            gnn_obj_positions = gnn_x[:n_object_particles].cpu().numpy()
+            gnn_obj_pcd.points = o3d.utility.Vector3dVector(gnn_obj_positions)
+            gnn_obj_pcd.paint_uniform_color([0, 1, 0])  # Green for GNN object predictions
+            vis.add_geometry(gnn_obj_pcd, reset_bounding_box=False)
+            
+            # Robot particles in red
+            gnn_robot_pcd = o3d.geometry.PointCloud()
+            gnn_robot_positions = gnn_x[n_object_particles:].cpu().numpy()
+            gnn_robot_pcd.points = o3d.utility.Vector3dVector(gnn_robot_positions)
+            gnn_robot_pcd.paint_uniform_color([1, 0, 0])  # Red for GNN robot predictions
+            vis.add_geometry(gnn_robot_pcd, reset_bounding_box=False)
+                
+            # Initialize GNN edge visualization parameters
+            adj_thresh = gnn_config['train']['edges']['collision']['adj_thresh']
+            topk = gnn_config['train']['edges']['collision']['topk']
+            tool_mask = torch.zeros(gnn_x.shape[0], dtype=torch.bool, device='cpu')
+            tool_mask[n_object_particles:] = True
+
+            # Move data to CPU
+            topological_edges = topological_edges.squeeze(0).cpu()
+            tool_mask = tool_mask.cpu()
 
         while True:
 
@@ -1748,16 +1502,7 @@ class InvPhyTrainerWarp:
             x = wp.to_torch(self.simulator.wp_states[-1].wp_x, requires_grad=False)
             collision_forces = wp.to_torch(
                 self.simulator.collision_forces, requires_grad=False
-            )[: self.num_dynamic]
-            filter_forces = torch.einsum(
-                "ij,ij->i", collision_forces, current_force_judge
             )
-            if torch.all(filter_forces > 3e4):
-                close_flag = False
-            else:
-                close_flag = True
-
-            # print(filter_forces)
 
             # Set the intial state for the next step
             self.simulator.set_init_state(
@@ -1821,10 +1566,34 @@ class InvPhyTrainerWarp:
                 x_vis = x.clone()
                 object_pcd.points = o3d.utility.Vector3dVector(x_vis.cpu().numpy())
                 vis.update_geometry(object_pcd)
-                for i, dynamic_mesh in enumerate(self.dynamic_meshes):
-                    dynamic_mesh.vertices = o3d.utility.Vector3dVector(
-                        self.dynamic_vertices[i]
-                    )
+                
+                # Update GNN prediction visualization
+                if gnn_obj_pcd is not None and gnn_x is not None and frame_count % downsample_rate == 0:
+                    # Remove old GNN edges
+                    for line_set in gnn_line_sets:
+                        if line_set is not None:
+                            vis.remove_geometry(line_set, reset_bounding_box=False)
+                    
+                    # Move data to CPU
+                    gnn_x = gnn_x.cpu()
+
+                    # Update GNN object positions
+                    gnn_obj_positions = gnn_x[:n_object_particles].cpu().numpy()
+                    gnn_obj_pcd.points = o3d.utility.Vector3dVector(gnn_obj_positions)
+                    vis.update_geometry(gnn_obj_pcd)
+                    
+                    # Update GNN robot positions
+                    gnn_robot_positions = gnn_x[n_object_particles:].cpu().numpy()
+                    gnn_robot_pcd.points = o3d.utility.Vector3dVector(gnn_robot_positions)
+                    vis.update_geometry(gnn_robot_pcd)
+                    
+                    # Update GNN edges
+                    gnn_line_sets = visualize_edges(gnn_x, topological_edges, tool_mask, adj_thresh, topk, False, [[1.0, 0.6, 0.2], [0.3, 0.6, 0.3]])  # light orange, light green
+                    for line_set in gnn_line_sets:
+                        if line_set is not None:
+                            vis.add_geometry(line_set, reset_bounding_box=False)
+                    
+                for dynamic_mesh in self.dynamic_meshes:
                     vis.update_geometry(dynamic_mesh)
                 vis.poll_events()
                 vis.update_renderer()
@@ -1855,33 +1624,7 @@ class InvPhyTrainerWarp:
             frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
 
             cv2.imshow("Interactive Playground", frame)
-            key = cv2.waitKey(1)
-
-            if virtual_key_input:
-                # Handle virtual keyboard input through OpenCV window
-                if key != -1:
-                    key_char = chr(key & 0xFF).lower()
-                    if key_char in self.key_mappings:
-                        # Store virtual key with timestamp - refresh timestamp if already pressed
-                        self.virtual_keys[key_char] = time.time()
-                        self.pressed_keys.add(key_char)
-                    elif key == 27:  # ESC key to exit
-                        break
-                
-                # Process all keyboard inputs (both physical and virtual)
-                # For virtual keys, check if they're still active based on timestamp
-                current_time = time.time()
-                keys_to_remove = []
-                for k, press_time in self.virtual_keys.items():
-                    if current_time - press_time > self.virtual_key_duration:
-                        keys_to_remove.append(k)
-                
-                # Remove expired virtual keys
-                for k in keys_to_remove:
-                    if k in self.pressed_keys:
-                        self.pressed_keys.discard(k)
-                    if k in self.virtual_keys:
-                        del self.virtual_keys[k]
+            cv2.waitKey(1)
 
             frame_comp_time = (
                 frame_timer.stop() + frame_setup_time
@@ -1938,93 +1681,60 @@ class InvPhyTrainerWarp:
             finger_change = self.get_finger_change()
             rot_change = self.get_rot_change()
 
-            # Galculate the substep vertices
-            if finger_change > 0:
-                is_closing = False
-            elif finger_change < 0:
-                is_closing = True
+            # Handle "6" key press for saving target snapshot with cooldown
+            if "6" in self.pressed_keys:
+                self.pressed_keys.remove("6")  # Remove to prevent multiple saves
+                if self.snapshot_cooldown <= 0:
+                    logger.info(f"Saved snapshot to {save_object_and_robot(x.detach().cpu(), self.robot_controller.dynamic_points.detach().cpu())}")
+                    self.snapshot_cooldown = 10  # Set 10-frame cooldown
+            
+            # Decrement cooldown counter
+            if self.snapshot_cooldown > 0:
+                self.snapshot_cooldown -= 1
+
+            # Update robot movement using the controller
+            movement_result = self.robot_controller.fine_robot_movement(
+                target_change=torch.tensor(target_change, dtype=torch.float32, device=self.robot_controller.device),
+                collision_forces=collision_forces,
+                finger_change=finger_change,
+                rot_change=torch.tensor(rot_change, dtype=torch.float32, device=self.robot_controller.device)
+            )
+            
+            # Update protected copies after robot movement
+            self._update_robot_visualization()
+
+            # GNN prediction logic
+            if gnn_rollout is not None:
+                # Store current robot positions for delta calculation
+                robot_positions_history.append(self.robot_controller.dynamic_points[robot_indices].clone())
                 
-            if is_closing:
-                if close_flag == True:
-                    finger_change = -0.05
-                else:
-                    finger_change = 0.0
-            else:
-                finger_change = 0.05
-
-            current_finger += finger_change
-            current_finger = max(0.0, min(1.0, current_finger))
-
-            accumulate_trans += target_change
-            finger_meshes = self.robot.get_finger_mesh(current_finger)
-            dynamic_vertices = torch.tensor(
-                [
-                    np.asarray(finger_mesh.vertices) + accumulate_trans[0]
-                    for finger_mesh in finger_meshes
-                ],
-                dtype=torch.float32,
-                device=cfg.device,
-            )
-            prev_trans_dynamic_points = current_trans_dynamic_points
-            current_trans_dynamic_points = torch.reshape(dynamic_vertices, (-1, 3))
-
-            # Caclulate the interpolated points considering finger and translation
-            ratios = (
-                torch.linspace(
-                    1, cfg.num_substeps, cfg.num_substeps, device=cfg.device
-                ).view(-1, 1, 1)
-                / cfg.num_substeps
-            )
-            interpolated_trans_dynamic_points = (
-                prev_trans_dynamic_points.unsqueeze(0)
-                + (current_trans_dynamic_points - prev_trans_dynamic_points).unsqueeze(
-                    0
-                )
-                * ratios
-            )
-            interpolated_center = torch.mean(interpolated_trans_dynamic_points, dim=1)
-
-            # Do the rotation on the interpolated points
-            new_rot = torch.tensor(rot_change, dtype=torch.float32, device=cfg.device)
-            interpolated_rot_angle =  new_rot.unsqueeze(
-                0
-            ) * ratios.reshape(-1, 1)
-            interpolated_rot_temp = axis_angle_to_matrix(interpolated_rot_angle)
-            interpolated_rot_mat = torch.matmul(accumulate_rot.unsqueeze(0), interpolated_rot_temp)
-            accumulate_rot = interpolated_rot_mat[-1]
-
-            interpolated_dynamic_points = (
-                interpolated_trans_dynamic_points - interpolated_center.unsqueeze(1)
-            ) @ interpolated_rot_mat.permute(0, 2, 1) + interpolated_center.unsqueeze(1)
-            self.dynamic_vertices = (
-                interpolated_dynamic_points[-1]
-                .reshape([-1] + list(self.dynamic_vertices[0].shape))
-                .cpu()
-                .numpy()
-            )
-
-            # Calculate the velocity and omega for calculating relative velocity
-            dynamic_velocity = torch.tensor(
-                target_change[0] / (2 * cfg.dt * cfg.num_substeps),
-                dtype=torch.float32,
-                device=cfg.device,
-            )
-            dynamic_omega = torch.tensor(
-                rot_change / (2 * cfg.dt * cfg.num_substeps),
-                dtype=torch.float32,
-                device=cfg.device,
-            )
-            # print(dynamic_omega)
-
-            # Update the force judge direction
-            current_force_judge = origin_force_judge.clone() @ interpolated_rot_mat[-1].T
-
+                # Keep only the last downsample_rate+1 frames for delta calculation
+                if len(robot_positions_history) > downsample_rate + 1:
+                    robot_positions_history = robot_positions_history[-(downsample_rate + 1):]
+                
+                # Update GNN prediction at downsample_rate intervals
+                if frame_count % downsample_rate == 0 and len(robot_positions_history) > downsample_rate:
+                    # Calculate next_delta for robot
+                    current_robot_pos = robot_positions_history[-1]  # Current frame
+                    prev_robot_pos = robot_positions_history[-downsample_rate-1]  # downsample_rate frames ago
+                    robot_delta = current_robot_pos - prev_robot_pos
+                    
+                    # Create next_delta tensor (object particles get zero delta, robot gets calculated delta)
+                    next_delta = torch.zeros(1, len(gnn_x), 3, device=cfg.device)
+                    next_delta[0, -len(robot_delta):, :] = robot_delta
+                    
+                    # Get GNN prediction
+                    with torch.no_grad():
+                        gnn_x = gnn_rollout.forward(next_delta).squeeze(0)
+                        
+                    logger.info(f"GNN prediction updated at frame {frame_count}")
+                
             # Update the simulator with the gripper changes
             self.simulator.set_mesh_interactive(
-                interpolated_dynamic_points,
-                interpolated_center,
-                dynamic_velocity,
-                dynamic_omega,
+                movement_result['interpolated_dynamic_points'],
+                movement_result['interpolated_center'],
+                movement_result['dynamic_velocity'],
+                movement_result['dynamic_omega'],
             )
 
             ############### Temporary timer ###############
@@ -2079,530 +1789,6 @@ class InvPhyTrainerWarp:
                 print(f"Energy: {total_energy:.2f}")
 
         listener.stop()
-
-    def interactive_cube(self, cube_mesh, n_ctrl_parts=1, inv_ctrl=False):
-        # Sample the points
-        # Convert to trimesh mesh
-        trimesh_mesh = trimesh.Trimesh(vertices=cube_mesh.vertices, faces=cube_mesh.triangles)
-        # Sample the surface points
-        surface_points, _ = trimesh.sample.sample_surface(
-            trimesh_mesh, 1024
-        )
-        # Sample the interior points
-        interior_points = trimesh.sample.volume_mesh(trimesh_mesh, 10000)
-        all_points = np.concatenate([surface_points, interior_points], axis=0)
-        
-        min_bound = np.min(all_points, axis=0)
-        volume_sample_size = 0.005
-        index = []
-        grid_flag = {}
-        final_surface_points = []
-        for i in range(surface_points.shape[0]):
-            grid_index = tuple(
-                np.floor((surface_points[i] - min_bound) / volume_sample_size).astype(
-                    int
-                )
-            )
-            if grid_index not in grid_flag:
-                grid_flag[grid_index] = 1
-                final_surface_points.append(surface_points[i])
-        final_interior_points = []
-        for i in range(interior_points.shape[0]):
-            grid_index = tuple(
-                np.floor((interior_points[i] - min_bound) / volume_sample_size).astype(
-                    int
-                )
-            )
-            if grid_index not in grid_flag:
-                grid_flag[grid_index] = 1
-                final_interior_points.append(interior_points[i])
-        all_points = np.concatenate(
-            [final_surface_points, final_interior_points],
-            axis=0,
-        )
-        object_points = torch.tensor(
-            all_points, dtype=torch.float32, device=cfg.device
-        )
-        # Connect the springs
-        (
-            self.init_vertices,
-            self.init_springs,
-            self.init_rest_lengths,
-            self.init_masses,
-            self.num_object_springs,
-        ) = self._init_start(
-            object_points,
-            None,
-        )
-
-        spring_Y = torch.ones(
-            self.num_object_springs, dtype=torch.float32, device=cfg.device
-        ) * 3e5
-        collide_elas = torch.tensor([0.2], dtype=torch.float32, device=cfg.device)
-        collide_fric = torch.tensor([2.0], dtype=torch.float32, device=cfg.device)
-
-        self.controller_points = None
-
-        self.simulator = SpringMassSystemWarp(
-            self.init_vertices,
-            self.init_springs,
-            self.init_rest_lengths,
-            self.init_masses,
-            dt=cfg.dt,
-            num_substeps=cfg.num_substeps,
-            spring_Y=cfg.init_spring_Y,
-            collide_elas=cfg.collide_elas,
-            collide_fric=cfg.collide_fric,
-            dashpot_damping=cfg.dashpot_damping,
-            drag_damping=cfg.drag_damping,
-            collide_object_elas=cfg.collide_object_elas,
-            collide_object_fric=cfg.collide_object_fric,
-            init_masks=self.init_masks,
-            collision_dist=cfg.collision_dist,
-            init_velocities=self.init_velocities,
-            num_object_points=len(object_points),
-            num_surface_points=len(object_points),
-            num_original_points=len(object_points),
-            controller_points=self.controller_points,
-            reverse_z=cfg.reverse_z,
-            spring_Y_min=cfg.spring_Y_min,
-            spring_Y_max=cfg.spring_Y_max,
-            gt_object_points=self.object_points,
-            gt_object_visibilities=self.object_visibilities,
-            gt_object_motions_valid=self.object_motions_valid,
-            self_collision=cfg.self_collision,
-            static_meshes=self.dynamic_meshes + self.static_meshes,
-            dynamic_points=self.dynamic_points,
-        )
-
-        self.simulator.set_spring_Y(torch.log(spring_Y).detach().clone())
-        self.simulator.set_collide(
-            collide_elas.detach().clone(), collide_fric.detach().clone()
-        )
-        ###########################################################################
-
-        logger.info("Party Time Start!!!!")
-        self.simulator.set_init_state(
-            self.simulator.wp_init_vertices, self.simulator.wp_init_velocities
-        )
-        prev_x = wp.to_torch(
-            self.simulator.wp_states[0].wp_x, requires_grad=False
-        ).clone()
-
-        vis_cam_idx = 0
-        FPS = cfg.FPS
-        width, height = cfg.WH
-        intrinsic = cfg.intrinsics[vis_cam_idx]
-        w2c = cfg.w2cs[vis_cam_idx]
-
-        image_path = cfg.bg_img_path
-        overlay = cv2.imread(image_path)
-        overlay = cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB)
-        overlay = torch.tensor(overlay, dtype=torch.float32, device=cfg.device)
-
-        self.n_ctrl_parts = n_ctrl_parts
-        print("UI Controls:")
-        print("- Set 1: WASD (XY movement), QE (Z movement)")
-        print("- Set 2: IJKL (XY movement), UO (Z movement)")
-        self.inv_ctrl = -1.0 if inv_ctrl else 1.0
-        self.key_mappings = {
-            # Set 1 controls
-            "w": (0, np.array([0.005, 0, 0]) * self.inv_ctrl),
-            "s": (0, np.array([-0.005, 0, 0]) * self.inv_ctrl),
-            "a": (0, np.array([0, -0.005, 0]) * self.inv_ctrl),
-            "d": (0, np.array([0, 0.005, 0]) * self.inv_ctrl),
-            "e": (0, np.array([0, 0, 0.005])),
-            "q": (0, np.array([0, 0, -0.005])),
-            # Set 2 controls
-            "i": (1, np.array([0.005, 0, 0]) * self.inv_ctrl),
-            "k": (1, np.array([-0.005, 0, 0]) * self.inv_ctrl),
-            "j": (1, np.array([0, -0.005, 0]) * self.inv_ctrl),
-            "l": (1, np.array([0, 0.005, 0]) * self.inv_ctrl),
-            "o": (1, np.array([0, 0, 0.005])),
-            "u": (1, np.array([0, 0, -0.005])),
-            # Set the finger
-            "n": 0.05,
-            "m": -0.05,
-            # Set the rotation
-            "z": [0, 0, 2.0 / 180 * np.pi],
-            "x": [0, 0, -2.0 / 180 * np.pi],
-            "c": [2.0 / 180 * np.pi, 0, 0],
-            "v": [-2.0 / 180 * np.pi, 0, 0],
-        }
-        self.pressed_keys = set()
-        self.w2c = w2c
-        self.intrinsic = intrinsic
-        self.init_control_ui()
-
-        listener = keyboard.Listener(on_press=self.on_press, on_release=self.on_release)
-        listener.start()
-        self.target_change = np.zeros((n_ctrl_parts, 3))
-
-        ############## Temporary timer ##############
-        import time
-
-        class Timer:
-            def __init__(self, name):
-                self.name = name
-                self.elapsed = 0
-                self.start_time = None
-                self.cuda_start_event = None
-                self.cuda_end_event = None
-                self.use_cuda = torch.cuda.is_available()
-
-            def start(self):
-                if self.use_cuda:
-                    torch.cuda.synchronize()
-                    self.cuda_start_event = torch.cuda.Event(enable_timing=True)
-                    self.cuda_end_event = torch.cuda.Event(enable_timing=True)
-                    self.cuda_start_event.record()
-                self.start_time = time.time()
-
-            def stop(self):
-                if self.use_cuda:
-                    self.cuda_end_event.record()
-                    torch.cuda.synchronize()
-                    self.elapsed = (
-                        self.cuda_start_event.elapsed_time(self.cuda_end_event) / 1000
-                    )  # convert ms to seconds
-                else:
-                    self.elapsed = time.time() - self.start_time
-                return self.elapsed
-
-            def reset(self):
-                self.elapsed = 0
-                self.start_time = None
-                self.cuda_start_event = None
-                self.cuda_end_event = None
-
-        sim_timer = Timer("Simulator")
-        render_timer = Timer("Rendering")
-        frame_timer = Timer("Frame Compositing")
-        interp_timer = Timer("Full Motion Interpolation")
-        total_timer = Timer("Total Loop")
-        knn_weights_timer = Timer("KNN Weights")
-        motion_interp_timer = Timer("Motion Interpolation")
-
-        # Performance stats
-        fps_history = []
-        component_times = {
-            "simulator": [],
-            "rendering": [],
-            "frame_compositing": [],
-            "full_motion_interpolation": [],
-            "total": [],
-            "knn_weights": [],
-            "motion_interp": [],
-        }
-
-        # Number of frames to average over for stats
-        STATS_WINDOW = 10
-        frame_count = 0
-
-        ############## End Temporary timer ##############
-        if self.static_meshes is not None:
-            vis = o3d.visualization.Visualizer()
-            vis.create_window(visible=False, width=width, height=height)
-            render_option = vis.get_render_option()
-            render_option.point_size = 10.0
-
-            for static_mesh in self.static_meshes:
-                vis.add_geometry(static_mesh)
-
-            for dynamic_mesh in self.dynamic_meshes:
-                vis.add_geometry(dynamic_mesh)
-
-            x_vis = wp.to_torch(
-                self.simulator.wp_states[0].wp_x, requires_grad=False
-            ).clone()
-            object_pcd = o3d.geometry.PointCloud()
-            object_pcd.points = o3d.utility.Vector3dVector(x_vis.cpu().numpy())
-            object_pcd.paint_uniform_color([0, 0, 1])
-            # object_pcd.paint_uniform_color([1, 1, 1])
-            vis.add_geometry(object_pcd)
-
-            # o3d.visualization.draw_geometries([object_pcd] + self.static_meshes)
-
-            view_control = vis.get_view_control()
-            camera_params = o3d.camera.PinholeCameraParameters()
-            intrinsic_parameter = o3d.camera.PinholeCameraIntrinsic(
-                width, height, intrinsic
-            )
-            camera_params.intrinsic = intrinsic_parameter
-            camera_params.extrinsic = w2c
-            view_control.convert_from_pinhole_camera_parameters(
-                camera_params, allow_arbitrary=True
-            )
-
-            # vis_image = np.asarray(vis.capture_screen_float_buffer(do_render=True))
-            # cv2.imshow("test", vis_image)
-            # cv2.waitKey(0)
-
-        accumulate_trans = np.zeros((n_ctrl_parts, 3))
-        accumulate_rot = torch.eye(3, dtype=torch.float32, device=cfg.device)
-
-        self.dynamic_vertices = [
-            np.asarray(finger_mesh.vertices) for finger_mesh in self.dynamic_meshes
-        ]
-
-        origin_force_judge = torch.tensor(
-            [[-1, 0, 0], [1, 0, 0]], dtype=torch.float32, device=cfg.device
-        )
-        current_force_judge = origin_force_judge.clone()
-        current_trans_dynamic_points = self.dynamic_points
-        current_finger = 1.0
-        close_flag = True
-        is_closing = False
-
-        while True:
-
-            total_timer.start()
-
-            # 1. Simulator step
-
-            sim_timer.start()
-
-            if self.simulator.object_collision_flag:
-                self.simulator.update_collision_graph()
-            wp.capture_launch(self.simulator.forward_graph)
-            x = wp.to_torch(self.simulator.wp_states[-1].wp_x, requires_grad=False)
-            collision_forces = wp.to_torch(
-                self.simulator.collision_forces, requires_grad=False
-            )[: self.num_dynamic]
-            filter_forces = torch.einsum(
-                "ij,ij->i", collision_forces, current_force_judge
-            )
-            if torch.all(filter_forces > 3e4):
-                close_flag = False
-            else:
-                close_flag = True
-
-            # print(filter_forces)
-
-            # Set the intial state for the next step
-            self.simulator.set_init_state(
-                self.simulator.wp_states[-1].wp_x,
-                self.simulator.wp_states[-1].wp_v,
-            )
-
-            sim_time = sim_timer.stop()
-            component_times["simulator"].append(sim_time)
-
-            torch.cuda.synchronize()
-
-            # 2. Frame initialization and setup
-
-            frame_timer.start()
-
-            frame = overlay.clone()
-
-            frame_setup_time = (
-                frame_timer.stop()
-            )  # We'll accumulate times for frame compositing
-
-            torch.cuda.synchronize()
-
-            # Continue frame compositing
-            frame_timer.start()
-            frame = frame.cpu().numpy()
-            frame = frame.astype(np.uint8)
-
-            if self.static_meshes is not None:
-                # Update with the visualziation of static meshes
-                x_vis = x.clone()
-                object_pcd.points = o3d.utility.Vector3dVector(x_vis.cpu().numpy())
-                vis.update_geometry(object_pcd)
-                for i, dynamic_mesh in enumerate(self.dynamic_meshes):
-                    dynamic_mesh.vertices = o3d.utility.Vector3dVector(
-                        self.dynamic_vertices[i]
-                    )
-                    vis.update_geometry(dynamic_mesh)
-                vis.poll_events()
-                vis.update_renderer()
-                static_image = np.asarray(
-                    vis.capture_screen_float_buffer(do_render=True)
-                )
-                # cv2.imshow("test", static_image)
-                # cv2.waitKey(1)
-                static_image = (static_image * 255).astype(np.uint8)
-                static_vis_mask = np.all(static_image == [255, 255, 255], axis=-1)
-                frame[~static_vis_mask] = static_image[~static_vis_mask]
-
-            frame = self.update_frame(frame, self.pressed_keys, overlay_hand=False)
-
-            # # Add shadows
-            # final_shadow = get_simple_shadow(
-            #     x, intrinsic, w2c, width, height, image_mask, light_point=[0, 0, -3]
-            # )
-            # frame[final_shadow] = (frame[final_shadow] * 0.95).astype(np.uint8)
-            # final_shadow = get_simple_shadow(
-            #     x, intrinsic, w2c, width, height, image_mask, light_point=[1, 0.5, -2]
-            # )
-            # frame[final_shadow] = (frame[final_shadow] * 0.97).astype(np.uint8)
-            # final_shadow = get_simple_shadow(
-            #     x, intrinsic, w2c, width, height, image_mask, light_point=[-3, -0.5, -5]
-            # )
-            # frame[final_shadow] = (frame[final_shadow] * 0.98).astype(np.uint8)
-            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-
-            cv2.imshow("Interactive Playground", frame)
-            cv2.waitKey(1)
-
-            frame_comp_time = (
-                frame_timer.stop() + frame_setup_time
-            )  # Total frame compositing time
-            component_times["frame_compositing"].append(frame_comp_time)
-
-            torch.cuda.synchronize()
-            prev_x = x.clone()
-
-            # Update the changes
-            target_change = self.get_target_change()
-            finger_change = self.get_finger_change()
-            rot_change = self.get_rot_change()
-
-            # Galculate the substep vertices
-            if finger_change > 0:
-                is_closing = False
-            elif finger_change < 0:
-                is_closing = True
-                
-            if is_closing:
-                if close_flag == True:
-                    finger_change = -0.05
-                else:
-                    finger_change = 0.0
-            else:
-                finger_change = 0.05
-
-            current_finger += finger_change
-            current_finger = max(0.0, min(1.0, current_finger))
-
-            accumulate_trans += target_change
-            finger_meshes = self.robot.get_finger_mesh(current_finger)
-            dynamic_vertices = torch.tensor(
-                [
-                    np.asarray(finger_mesh.vertices) + accumulate_trans[0]
-                    for finger_mesh in finger_meshes
-                ],
-                dtype=torch.float32,
-                device=cfg.device,
-            )
-            prev_trans_dynamic_points = current_trans_dynamic_points
-            current_trans_dynamic_points = torch.reshape(dynamic_vertices, (-1, 3))
-
-            # Caclulate the interpolated points considering finger and translation
-            ratios = (
-                torch.linspace(
-                    1, cfg.num_substeps, cfg.num_substeps, device=cfg.device
-                ).view(-1, 1, 1)
-                / cfg.num_substeps
-            )
-            interpolated_trans_dynamic_points = (
-                prev_trans_dynamic_points.unsqueeze(0)
-                + (current_trans_dynamic_points - prev_trans_dynamic_points).unsqueeze(
-                    0
-                )
-                * ratios
-            )
-            interpolated_center = torch.mean(interpolated_trans_dynamic_points, dim=1)
-
-            # Do the rotation on the interpolated points
-            new_rot = torch.tensor(rot_change, dtype=torch.float32, device=cfg.device)
-            interpolated_rot_angle =  new_rot.unsqueeze(
-                0
-            ) * ratios.reshape(-1, 1)
-            interpolated_rot_temp = axis_angle_to_matrix(interpolated_rot_angle)
-            interpolated_rot_mat = torch.matmul(accumulate_rot.unsqueeze(0), interpolated_rot_temp)
-            accumulate_rot = interpolated_rot_mat[-1]
-
-            interpolated_dynamic_points = (
-                interpolated_trans_dynamic_points - interpolated_center.unsqueeze(1)
-            ) @ interpolated_rot_mat.permute(0, 2, 1) + interpolated_center.unsqueeze(1)
-            self.dynamic_vertices = (
-                interpolated_dynamic_points[-1]
-                .reshape([-1] + list(self.dynamic_vertices[0].shape))
-                .cpu()
-                .numpy()
-            )
-
-            # Calculate the velocity and omega for calculating relative velocity
-            dynamic_velocity = torch.tensor(
-                target_change[0] / (2 * cfg.dt * cfg.num_substeps),
-                dtype=torch.float32,
-                device=cfg.device,
-            )
-            dynamic_omega = torch.tensor(
-                rot_change / (2 * cfg.dt * cfg.num_substeps),
-                dtype=torch.float32,
-                device=cfg.device,
-            )
-            # print(dynamic_omega)
-
-            # Update the force judge direction
-            current_force_judge = origin_force_judge.clone() @ interpolated_rot_mat[-1]
-
-            # Update the simulator with the gripper changes
-            self.simulator.set_mesh_interactive(
-                interpolated_dynamic_points,
-                interpolated_center,
-                dynamic_velocity,
-                dynamic_omega,
-            )
-
-            ############### Temporary timer ###############
-            # Total loop time
-            total_time = total_timer.stop()
-            component_times["total"].append(total_time)
-
-            # Calculate FPS
-            fps = 1.0 / total_time
-            fps_history.append(fps)
-
-            # Display performance stats periodically
-            frame_count += 1
-            if frame_count % 10 == 0:
-                # Limit stats to last STATS_WINDOW frames
-                if len(fps_history) > STATS_WINDOW:
-                    fps_history = fps_history[-STATS_WINDOW:]
-                    for key in component_times:
-                        component_times[key] = component_times[key][-STATS_WINDOW:]
-
-                avg_fps = np.mean(fps_history)
-                print(
-                    f"\n--- Performance Stats (avg over last {len(fps_history)} frames) ---"
-                )
-                print(f"FPS: {avg_fps:.2f}")
-
-                # Calculate percentages for pie chart
-                total_avg = np.mean(component_times["total"])
-                print(f"Total Frame Time: {total_avg*1000:.2f} ms")
-
-                # Display individual component times
-                for key in [
-                    "simulator",
-                    "rendering",
-                    "frame_compositing",
-                    "full_motion_interpolation",
-                    "knn_weights",
-                    "motion_interp",
-                ]:
-                    avg_time = np.mean(component_times[key])
-                    percentage = (avg_time / total_avg) * 100
-                    print(
-                        f"{key.capitalize()}: {avg_time*1000:.2f} ms ({percentage:.1f}%)"
-                    )
-                total_energy = calculate_energy(
-                    prev_x,
-                    spring_Y,
-                    self.init_springs,
-                    self.init_rest_lengths,
-                    self.num_object_springs,
-                )
-                print(f"Energy: {total_energy:.2f}")
-
-        listener.stop()
-
 
     def _transform_gs(self, gaussians, M, majority_scale=1):
 
@@ -3277,6 +2463,17 @@ class InvPhyTrainerWarp:
         vis.destroy_window()
         video_writer.release()
 
+    def _update_robot_visualization(self):
+        """Update protected copies of robot data for visualization and simulation."""
+        start_idx = 0
+        if self.robot_controller is not None:
+            # Update dynamic points (for simulator)
+            for mesh in self.dynamic_meshes:
+                end_idx = start_idx + len(mesh.vertices)
+                mesh.vertices = o3d.utility.Vector3dVector(self.robot_controller.dynamic_points[start_idx:end_idx].cpu().numpy())
+                start_idx = end_idx
+            assert end_idx == self.robot_controller.dynamic_points.shape[0], "Dynamic points shape mismatch"
+
 
 def get_simple_shadow(
     points,
@@ -3325,127 +2522,6 @@ def get_simple_shadow(
     final_shadow = final_shadow == 255
     return final_shadow
 
-
-# Borrow ideas and codes from H. Sánchez's answer
-# https://stackoverflow.com/questions/59026581/create-arrows-in-open3d
-def getArrowMesh(origin=[0, 0, 0], end=None, color=[0, 0, 0]):
-    vec_Arr = np.array(end) - np.array(origin)
-    vec_len = np.linalg.norm(vec_Arr)
-    mesh_arrow = o3d.geometry.TriangleMesh.create_arrow(
-        cone_height=0.05 * vec_len,
-        cone_radius=0.002,
-        cylinder_height=0.2 * vec_len,
-        cylinder_radius=0.003,
-    )
-    mesh_arrow.paint_uniform_color(color)
-    rot_mat = _caculate_align_mat(vec_Arr / vec_len)
-    mesh_arrow.rotate(rot_mat, center=np.array([0, 0, 0]))
-    mesh_arrow.translate(np.array(origin))
-    return mesh_arrow
-
-
-def _get_cross_prod_mat(pVec_Arr):
-    # pVec_Arr shape (3)
-    qCross_prod_mat = np.array(
-        [
-            [0, -pVec_Arr[2], pVec_Arr[1]],
-            [pVec_Arr[2], 0, -pVec_Arr[0]],
-            [-pVec_Arr[1], pVec_Arr[0], 0],
-        ]
-    )
-    return qCross_prod_mat
-
-
-def _caculate_align_mat(pVec_Arr):
-    scale = np.linalg.norm(pVec_Arr)
-    pVec_Arr = pVec_Arr / scale
-    # must ensure pVec_Arr is also a unit vec.
-    z_unit_Arr = np.array([0, 0, 1])
-    z_mat = _get_cross_prod_mat(z_unit_Arr)
-
-    z_c_vec = np.matmul(z_mat, pVec_Arr)
-    z_c_vec_mat = _get_cross_prod_mat(z_c_vec)
-    if np.dot(z_unit_Arr, pVec_Arr) == -1:
-        qTrans_Mat = -np.eye(3, 3)
-    elif np.dot(z_unit_Arr, pVec_Arr) == 1:
-        qTrans_Mat = np.eye(3, 3)
-    else:
-        qTrans_Mat = (
-            np.eye(3, 3)
-            + z_c_vec_mat
-            + np.matmul(z_c_vec_mat, z_c_vec_mat) / (1 + np.dot(z_unit_Arr, pVec_Arr))
-        )
-    qTrans_Mat *= scale
-    return qTrans_Mat
-
-
-def construct_stiffness_matrix_sparse(
-    springs, positions, spring_Y, rest_lengths, num_points, device
-):
-    # springs: (N_springs, 2)
-    # positions: (N_points, 3)
-    # spring_Y: (N_springs,)
-    # rest_lengths: (N_springs,)
-
-    i = springs[:, 0]
-    j = springs[:, 1]
-
-    x_i = positions[i]  # (N, 3)
-    x_j = positions[j]
-    d = x_j - x_i  # (N, 3)
-    d_norm = torch.norm(d, dim=1, keepdim=True) + 1e-8
-    d_hat = d / d_norm  # (N, 3)
-
-    coeff = spring_Y / rest_lengths  # (N,)
-    k_blocks = coeff[:, None, None] * (
-        d_hat[:, :, None] @ d_hat[:, None, :]
-    )  # (N, 3, 3)
-
-    indices = []
-    values = []
-
-    for shift_i, shift_j, sign in [(0, 0, 1), (0, 1, -1), (1, 0, -1), (1, 1, 1)]:
-        node_i = springs[:, shift_i]
-        node_j = springs[:, shift_j]
-
-        for a in range(3):
-            for b in range(3):
-                row_idx = 3 * node_i + a
-                col_idx = 3 * node_j + b
-                val = sign * k_blocks[:, a, b]
-                indices.append(torch.stack([row_idx, col_idx], dim=0))  # (2, N)
-                values.append(val)
-
-    indices = torch.cat(indices, dim=1)  # (2, total_nonzero)
-    values = torch.cat(values, dim=0)  # (total_nonzero,)
-    size = (3 * num_points, 3 * num_points)
-    K_sparse = torch.sparse_coo_tensor(indices, values, size, device=device).coalesce()
-    return K_sparse
-
-
-def compute_effective_stiffness(points, springs, Y, rest_lengths, device):
-    """
-    Compute effective stiffness for each point based on stiffness matrix diagonal blocks.
-    Return: (N_points,) tensor of Frobenius norm of 3x3 diagonal blocks in stiffness matrix.
-    """
-    num_points = points.shape[0]
-    K_sparse = construct_stiffness_matrix_sparse(
-        springs=springs,
-        positions=points,
-        spring_Y=Y,
-        rest_lengths=rest_lengths,
-        num_points=num_points,
-        device=device,
-    )
-
-    K_dense = K_sparse.to_dense()
-    stiffness_map = torch.zeros(num_points, device=device)
-    for i in range(num_points):
-        block = K_dense[3 * i : 3 * i + 3, 3 * i : 3 * i + 3]
-        stiffness_map[i] = torch.norm(block, p="fro")
-    return stiffness_map
-
-
 def calculate_energy(x, spring_Y, springs, rest_lengths, num_object_springs):
     object_springs = springs[:num_object_springs]
     object_rest_lengths = rest_lengths[:num_object_springs]
@@ -3469,41 +2545,3 @@ def calculate_energy(x, spring_Y, springs, rest_lengths, num_object_springs):
         return total_energy
 
 
-# Copy From pytorch3d implementation
-def axis_angle_to_matrix(axis_angle: torch.Tensor) -> torch.Tensor:
-    """
-    Convert rotations given as axis/angle to rotation matrices.
-
-    Args:
-        axis_angle: Rotations given as a vector in axis angle form,
-            as a tensor of shape (..., 3), where the magnitude is
-            the angle turned anticlockwise in radians around the
-            vector's direction.
-        fast: Whether to use the new faster implementation (based on the
-            Rodrigues formula) instead of the original implementation (which
-            first converted to a quaternion and then back to a rotation matrix).
-
-    Returns:
-        Rotation matrices as tensor of shape (..., 3, 3).
-    """
-
-    shape = axis_angle.shape
-    device, dtype = axis_angle.device, axis_angle.dtype
-
-    angles = torch.norm(axis_angle, p=2, dim=-1, keepdim=True).unsqueeze(-1)
-
-    rx, ry, rz = axis_angle[..., 0], axis_angle[..., 1], axis_angle[..., 2]
-    zeros = torch.zeros(shape[:-1], dtype=dtype, device=device)
-    cross_product_matrix = torch.stack(
-        [zeros, -rz, ry, rz, zeros, -rx, -ry, rx, zeros], dim=-1
-    ).view(shape + (3,))
-    cross_product_matrix_sqrd = cross_product_matrix @ cross_product_matrix
-
-    identity = torch.eye(3, dtype=dtype, device=device)
-    angles_sqrd = angles * angles
-    angles_sqrd = torch.where(angles_sqrd == 0, 1, angles_sqrd)
-    return (
-        identity.expand(cross_product_matrix.shape)
-        + torch.sinc(angles / torch.pi) * cross_product_matrix
-        + ((1 - torch.cos(angles)) / angles_sqrd) * cross_product_matrix_sqrd
-    )

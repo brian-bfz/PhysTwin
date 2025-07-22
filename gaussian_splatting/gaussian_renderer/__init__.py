@@ -11,7 +11,6 @@
 
 import torch
 import math
-from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 from ..scene.gaussian_model import GaussianModel
 from ..utils.sh_utils import eval_sh
 from torch.nn import functional as F
@@ -19,10 +18,7 @@ from gsplat import rasterization
 
 
 def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, use_gsplat=True, antialiased=False, separate_sh = False, use_trained_exp=False):
-    if use_gsplat:
-        return render_gsplat(viewpoint_camera, pc, pipe, bg_color, scaling_modifier, override_color, antialiased)
-    else:
-        return render_3dgs(viewpoint_camera, pc, pipe, bg_color, scaling_modifier, separate_sh, override_color, use_trained_exp)
+    return render_gsplat(viewpoint_camera, pc, pipe, bg_color, scaling_modifier, override_color, antialiased)
 
 
 # This is code is adapted from ChatSim background gaussians model: 

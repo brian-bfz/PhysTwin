@@ -22,11 +22,6 @@ from simple_knn._C import distCUDA2
 from ..utils.graphics_utils import BasicPointCloud
 from ..utils.general_utils import strip_symmetric, build_scaling_rotation, get_minimum_axis, flip_align_view
 
-try:
-    from diff_gaussian_rasterization import SparseGaussianAdam
-except:
-    pass
-
 class GaussianModel:
 
     def setup_functions(self):
