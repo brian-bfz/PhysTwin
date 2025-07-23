@@ -1231,66 +1231,7 @@ class InvPhyTrainerWarp:
     def interactive_robot(self, model_path, gs_path, n_ctrl_parts=1, inv_ctrl=False, virtual_key_input=False, gnn_model=None, gnn_config=None):
         from pynput import keyboard
 
-        # Load the model
-        logger.info(f"Load model from {model_path}")
-        checkpoint = torch.load(model_path, map_location=cfg.device)
-
-        spring_Y = checkpoint["spring_Y"]
-        collide_elas = checkpoint["collide_elas"]
-        collide_fric = checkpoint["collide_fric"]
-        collide_object_elas = checkpoint["collide_object_elas"]
-        collide_object_fric = checkpoint["collide_object_fric"]
-        num_object_springs = checkpoint["num_object_springs"]
-
-        spring_Y = spring_Y[: self.num_object_springs]
-        self.init_springs = self.init_springs[: self.num_object_springs]
-        self.init_rest_lengths = self.init_rest_lengths[: self.num_object_springs]
-        self.init_vertices = self.init_vertices[: self.num_all_points]
-        self.init_masses = self.init_masses[: self.num_all_points]
-        self.controller_points = None
-
-        self.simulator = SpringMassSystemWarp(
-            self.init_vertices,
-            self.init_springs,
-            self.init_rest_lengths,
-            self.init_masses,
-            dt=cfg.dt,
-            num_substeps=cfg.num_substeps,
-            spring_Y=cfg.init_spring_Y,
-            collide_elas=cfg.collide_elas,
-            collide_fric=cfg.collide_fric,
-            dashpot_damping=cfg.dashpot_damping,
-            drag_damping=cfg.drag_damping,
-            collide_object_elas=cfg.collide_object_elas,
-            collide_object_fric=cfg.collide_object_fric,
-            init_masks=self.init_masks,
-            collision_dist=cfg.collision_dist,
-            init_velocities=self.init_velocities,
-            num_object_points=self.num_all_points,
-            num_surface_points=self.num_surface_points,
-            num_original_points=self.num_original_points,
-            controller_points=self.controller_points,
-            reverse_z=cfg.reverse_z,
-            spring_Y_min=cfg.spring_Y_min,
-            spring_Y_max=cfg.spring_Y_max,
-            gt_object_points=self.object_points,
-            gt_object_visibilities=self.object_visibilities,
-            gt_object_motions_valid=self.object_motions_valid,
-            self_collision=cfg.self_collision,
-            static_meshes=self.dynamic_meshes + self.static_meshes,
-            dynamic_points=self.robot_controller.dynamic_points,
-        )
-
-        self.simulator.set_spring_Y(torch.log(spring_Y).detach().clone())
-        self.simulator.set_collide(
-            collide_elas.detach().clone(), collide_fric.detach().clone()
-        )
-        self.simulator.set_collide_object(
-            collide_object_elas.detach().clone(),
-            collide_object_fric.detach().clone(),
-        )
-
-        ###########################################################################
+        self.initialize_simulator(model_path)
 
         logger.info("Party Time Start!!!!")
         self.simulator.set_init_state(
@@ -1890,14 +1831,14 @@ class InvPhyTrainerWarp:
                     print(
                         f"{key.capitalize()}: {avg_time*1000:.2f} ms ({percentage:.1f}%)"
                     )
-                total_energy = calculate_energy(
-                    prev_x,
-                    spring_Y,
-                    self.init_springs,
-                    self.init_rest_lengths,
-                    num_object_springs,
-                )
-                print(f"Energy: {total_energy:.2f}")
+                # total_energy = calculate_energy(
+                #     prev_x,
+                #     spring_Y,
+                #     self.init_springs,
+                #     self.init_rest_lengths,
+                #     num_object_springs,
+                # )
+                # print(f"Energy: {total_energy:.2f}")
 
         listener.stop()
 

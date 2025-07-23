@@ -10,7 +10,7 @@ from urdfpy import URDF
 from .paths import *
 
 # Import GNN modules
-from GNN.model.gnn_dyn import PropNetDiffDenModel
+from GNN.model.lightning import GNNLightning
 from GNN.utils import load_yaml
 from GNN.paths import get_model_paths
 
@@ -75,6 +75,15 @@ if __name__ == "__main__":
     # Load the static_meshes (keeping existing static mesh setup)
     static_meshes = []
 
+    # Create trainer
+    trainer = InvPhyTrainerWarp(
+        data_path=config.get_data_path(),
+        base_dir=config.get_temp_base_dir(),
+        pure_inference_mode=True,
+        static_meshes=static_meshes,
+        robot_controller=config.get_robot_controller("interactive"),
+    )
+
     # Load GNN model and config
     gnn_model = None
     gnn_config = None
@@ -92,31 +101,18 @@ if __name__ == "__main__":
             gnn_config = load_yaml(config_path)
             logger.info(f"Loaded GNN config from: {config_path}")
             
-            # Load model
-            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-            gnn_model = PropNetDiffDenModel(gnn_config, torch.cuda.is_available())
-            model_checkpoint = torch.load(str(model_paths['net_best']), map_location=device)
-            gnn_model.load_state_dict(model_checkpoint)
-            gnn_model.to(device)
+            gnn_module = GNNLightning.load_from_checkpoint(str(model_paths['last_ckpt']), config=gnn_config, visualize=False)
+            gnn_model = gnn_module.model
+            gnn_model.to(cfg.device)
             gnn_model.eval()
-            
-            logger.info(f"Loaded GNN model from: {model_paths['net_best']}")
-            logger.info(f"GNN model ready for comparison visualization")
+
+            logger.info(f"Loaded GNN model from: {model_paths['last_ckpt']}")
             
         except Exception as e:
             logger.warning(f"Failed to load GNN model: {e}")
             logger.warning("Continuing without GNN comparison")
             gnn_model = None
             gnn_config = None
-
-    # Create trainer
-    trainer = InvPhyTrainerWarp(
-        data_path=config.get_data_path(),
-        base_dir=config.get_temp_base_dir(),
-        pure_inference_mode=True,
-        static_meshes=static_meshes,
-        robot_controller=config.get_robot_controller("interactive"),
-    )
 
     # Run interactive session
     best_model_path = config.get_best_model_path()
