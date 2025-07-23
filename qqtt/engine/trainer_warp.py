@@ -1046,11 +1046,49 @@ class InvPhyTrainerWarp:
 
         # Initialize storage for all frames
         frame_count = 0
-        object_frames = []
-        robot_frames = []
-        gaussians_frames = [] if self.include_gaussian else None
 
-        for i in range(n_frames):
+        ############## End Temporary timer ##############
+        if self.static_meshes is not None:
+            vis = o3d.visualization.Visualizer()
+            vis.create_window(visible=False, width=width, height=height)
+            render_option = vis.get_render_option()
+            render_option.point_size = 10.0
+
+            for static_mesh in self.static_meshes:
+                vis.add_geometry(static_mesh)
+
+            x_vis = wp.to_torch(
+                self.simulator.wp_states[0].wp_x, requires_grad=False
+            ).clone()
+            object_pcd = o3d.geometry.PointCloud()
+            object_pcd.points = o3d.utility.Vector3dVector(x_vis.cpu().numpy())
+            # object_pcd.paint_uniform_color([1, 0, 0])
+            object_pcd.paint_uniform_color([1, 1, 1])
+            vis.add_geometry(object_pcd)
+
+            # o3d.visualization.draw_geometries([object_pcd] + self.static_meshes)
+
+            view_control = vis.get_view_control()
+            camera_params = o3d.camera.PinholeCameraParameters()
+            intrinsic_parameter = o3d.camera.PinholeCameraIntrinsic(
+                width, height, intrinsic
+            )
+            camera_params.intrinsic = intrinsic_parameter
+            camera_params.extrinsic = w2c
+            view_control.convert_from_pinhole_camera_parameters(
+                camera_params, allow_arbitrary=True
+            )
+
+            # vis_image = np.asarray(vis.capture_screen_float_buffer(do_render=True))
+            # cv2.imshow("test", vis_image)
+            # cv2.waitKey(0)
+        if self.simulator.object_collision_flag:
+            self.simulator.create_resting_case()
+
+        while True:
+
+            total_timer.start()
+
             # 1. Simulator step
             if self.simulator.object_collision_flag:
                 self.simulator.update_collision_graph()
@@ -1493,6 +1531,9 @@ class InvPhyTrainerWarp:
             # Move data to CPU
             topological_edges = topological_edges.squeeze(0).cpu()
             tool_mask = tool_mask.cpu()
+
+        if self.simulator.object_collision_flag:
+            self.simulator.create_resting_case()
 
         while True:
 
