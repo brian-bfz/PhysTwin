@@ -9,7 +9,7 @@ from .config_manager import PhysTwinConfig, create_common_parser
 from .paths import *
 from shared.utils import parse_episodes
 
-def video_from_data(cfg, f, episode_id, dynamic_meshes, output_dir):
+def video_from_data(f, episode_id, dynamic_meshes, output_dir):
         logger.info(f"Starting video generation for episode {episode_id}")
 
         vis_cam_idx = 0
@@ -145,4 +145,4 @@ if __name__ == "__main__":
     data_file = args.data_dir + '/' + args.data_file + '.h5'
     with h5py.File(data_file, 'r') as f:
         for episode_id in episode_list:
-            video_from_data(cfg, f, episode_id, dynamic_meshes, args.output_dir)
+            video_from_data(f, episode_id, dynamic_meshes, args.output_dir)

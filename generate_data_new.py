@@ -311,10 +311,9 @@ if __name__ == "__main__":
 
     if args.video:
         from .visualize_data import video_from_data
-        from .qqtt.utils import cfg
         
         robot = PhysTwinConfig(args.case_name).get_robot_controller(device='cpu')
         meshes = robot.finger_meshes
         with h5py.File(output_file, 'r') as f:
             for i in range(args.n_episodes):
-                video_from_data(cfg, f, i, meshes, str(GENERATED_VIDEOS_DIR / args.output_file))
+                video_from_data(f, i, meshes, str(GENERATED_VIDEOS_DIR / args.output_file))
