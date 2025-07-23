@@ -133,6 +133,7 @@ class RobotLoader:
         Returns:
             List of finger meshes
         """
+        gripper_openness -= 0.15
         # Calculate joint positions from gripper openness
         g = 800 * gripper_openness  # gripper openness
         g = (800 - g) * 180 / np.pi
