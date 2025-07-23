@@ -35,8 +35,8 @@ class PhysTwinRolloutFn:
         # Calculate frame duration for velocity conversion
         self.frame_duration = cfg.dt * cfg.num_substeps
         
-        # Create robot controller
         self.robot_controller = self.trainer.robot_controller
+        self.simulator = self.trainer.simulator
         
     def __call__(self, state_cur, action_seqs):
         """
@@ -94,13 +94,15 @@ class PhysTwinRolloutFn:
         
         # Reset simulator to initial object state
         initial_state_warp = wp.from_torch(initial_object_state.contiguous(), dtype=wp.vec3)
-        self.trainer.simulator.set_init_state(
+        self.simulator.set_init_state(
             initial_state_warp,
-            self.trainer.simulator.wp_init_velocities  # Reset velocities to zero
+            self.simulator.wp_init_velocities  # Reset velocities to zero
         )
         
         predicted_states = torch.zeros(n_look_ahead, n_particles, 3, device=self.device)
         collision_forces = None
+        if self.simulator.object_collision_flag:
+            self.simulator.create_resting_case()
         
         for i in range(n_look_ahead):
             # Apply robot translation using controller
@@ -115,7 +117,7 @@ class PhysTwinRolloutFn:
             )
             
             # Update simulator with proper robot movement
-            self.trainer.simulator.set_mesh_interactive(
+            self.simulator.set_mesh_interactive(
                 movement_result['interpolated_dynamic_points'],
                 movement_result['interpolated_center'],
                 movement_result['dynamic_velocity'],
@@ -123,21 +125,21 @@ class PhysTwinRolloutFn:
             )
             
             # Run physics step with collision detection
-            if self.trainer.simulator.object_collision_flag:
-                self.trainer.simulator.update_collision_graph()
-            wp.capture_launch(self.trainer.simulator.forward_graph)
+            if self.simulator.object_collision_flag:
+                self.simulator.update_collision_graph()
+            wp.capture_launch(self.simulator.forward_graph)
             collision_forces = wp.to_torch(
-                self.trainer.simulator.collision_forces, requires_grad=False
+                self.simulator.collision_forces, requires_grad=False
             )
             
             # Update simulator state for next step
-            self.trainer.simulator.set_init_state(
-                self.trainer.simulator.wp_states[-1].wp_x,
-                self.trainer.simulator.wp_states[-1].wp_v,
+            self.simulator.set_init_state(
+                self.simulator.wp_states[-1].wp_x,
+                self.simulator.wp_states[-1].wp_v,
             )
         
             # Get new object state
-            x = wp.to_torch(self.trainer.simulator.wp_states[-1].wp_x, requires_grad=False)
+            x = wp.to_torch(self.simulator.wp_states[-1].wp_x, requires_grad=False)
             
             # Combine object and robot states (use final robot position)
             combined_state = torch.cat([x, movement_result['interpolated_dynamic_points'][-1]], dim=0)

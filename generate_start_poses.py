@@ -318,7 +318,6 @@ def visualize_poses(poses_data_path):
     with h5py.File(poses_data_path, 'r') as f:
         object = f['object'][0]
         targets = f['target'][:]
-    print(object.shape, targets.shape)
 
     # Visualize the poses
     object_pcd = o3d.geometry.PointCloud()

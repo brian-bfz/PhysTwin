@@ -1,15 +1,11 @@
 import torch
 from ...utils import logger, cfg
-import warp as wp
 import numpy as np
 
+
+import warp as wp
 wp.init()
 wp.set_device("cuda:0")
-if not cfg.use_graph:
-    wp.config.mode = "debug"
-    wp.config.verbose = True
-    wp.config.verify_autograd_array_access = True
-
 
 class State:
     def __init__(self, wp_init_vertices, num_control_points):
