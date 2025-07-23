@@ -58,6 +58,9 @@ if __name__ == "__main__":
         "--gnn_config", type=str, default=None,
         help="GNN config path (if not provided, uses model's config)"
     )
+    parser.add_argument(
+        "--virtual_key", action="store_true", help="select this option if you are using rustdesk"
+    )
     args = parser.parse_args()
 
     # Initialize configuration - this replaces ~80 lines of setup code
@@ -124,6 +127,7 @@ if __name__ == "__main__":
         gaussians_path,
         args.n_ctrl_parts,
         args.inv_ctrl,
+        virtual_key_input=args.virtual_key,
         gnn_model=gnn_model,
         gnn_config=gnn_config,
     )

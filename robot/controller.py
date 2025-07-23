@@ -135,7 +135,7 @@ class RobotController:
         self.is_closing = False if self.current_finger >= 0.9 else True
  
         # Update force judge direction
-        self.current_force_judge = self.origin_force_judge.clone() @ self.accumulate_rot
+        self.current_force_judge = self.origin_force_judge.clone() @ self.accumulate_rot.T
         
         return self.dynamic_points
         
@@ -220,7 +220,7 @@ class RobotController:
         self.dynamic_points = interpolated_dynamic_points[-1]
         
         # Update force judge direction
-        self.current_force_judge = self.origin_force_judge.clone() @ interpolated_rot_mat[-1]
+        self.current_force_judge = self.origin_force_judge.clone() @ interpolated_rot_mat[-1].T
         
         # Calculate velocity and omega
         dynamic_velocity = target_change[0] / (2 * cfg.dt * cfg.num_substeps)
