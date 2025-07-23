@@ -32,12 +32,6 @@ class PhysTwinRolloutFn:
         self.robot_mask = robot_mask
         self.device = device
         
-        # Calculate frame duration for velocity conversion
-        self.frame_duration = cfg.dt * cfg.num_substeps
-        
-        self.robot_controller = self.trainer.robot_controller
-        self.simulator = self.trainer.simulator
-        
     def __call__(self, state_cur, action_seqs):
         """
         Evaluate multiple action sequences using sequential PhysTwin rollouts.
@@ -61,7 +55,7 @@ class PhysTwinRolloutFn:
         state_seqs = torch.zeros(n_sample, n_look_ahead, state_cur.shape[1], device=self.device)
         
         for i in range(n_sample):
-            predicted_states = self.rollout_single_sequence(
+            predicted_states = self.trainer.rollout_act_seq(
                 initial_object_state,
                 initial_robot_state, 
                 action_seqs[i]  # [n_look_ahead, 2]
@@ -69,83 +63,6 @@ class PhysTwinRolloutFn:
             state_seqs[i] = predicted_states.flatten(start_dim=1)  # [n_look_ahead, n_particles * 3]
             
         return {'state_seqs': state_seqs}
-    
-    def rollout_single_sequence(self, initial_object_state, initial_robot_state, action_seq, init_finger=0.0):
-        """
-        Run PhysTwin simulation for single action sequence.
-        
-        Args:
-            initial_object_state: [n_obj, 3]
-            initial_robot_state: [n_bot, 3] 
-            action_seq: [n_look_ahead, 2 or 3] - robot translation sequence
-            
-        Returns:
-            predicted_states: [n_look_ahead, n_particles, 3] - combined object + robot states
-        """
-        # Set z velocity to 0
-        n_look_ahead, action_dim = action_seq.shape
-        if action_dim == 2:
-            action_seq = torch.cat([action_seq, torch.zeros(action_seq.shape[0], 1, device=self.device)], dim=1)
-        n_particles = initial_object_state.shape[0] + initial_robot_state.shape[0]
-        # print(action_seq)
-
-        # Reset robot to initial position (reconstruct from initial_robot_state)
-        self.robot_controller.set_to_match_vertices(initial_robot_state, init_finger)
-        
-        # Reset simulator to initial object state
-        initial_state_warp = wp.from_torch(initial_object_state.contiguous(), dtype=wp.vec3)
-        self.simulator.set_init_state(
-            initial_state_warp,
-            self.simulator.wp_init_velocities  # Reset velocities to zero
-        )
-        
-        predicted_states = torch.zeros(n_look_ahead, n_particles, 3, device=self.device)
-        collision_forces = None
-        if self.simulator.object_collision_flag:
-            self.simulator.create_resting_case()
-        
-        for i in range(n_look_ahead):
-            # Apply robot translation using controller
-            robot_translation = action_seq[i]
-            
-            # Update robot movement using the controller
-            movement_result = self.robot_controller.fine_robot_movement(
-                target_change=robot_translation.unsqueeze(0),  # Shape: [1, 3] for n_ctrl_parts=1
-                collision_forces=collision_forces, 
-                finger_change=0.0,  # Fixed gripper opening
-                rot_change=None
-            )
-            
-            # Update simulator with proper robot movement
-            self.simulator.set_mesh_interactive(
-                movement_result['interpolated_dynamic_points'],
-                movement_result['interpolated_center'],
-                movement_result['dynamic_velocity'],
-                movement_result['dynamic_omega'],
-            )
-            
-            # Run physics step with collision detection
-            if self.simulator.object_collision_flag:
-                self.simulator.update_collision_graph()
-            wp.capture_launch(self.simulator.forward_graph)
-            collision_forces = wp.to_torch(
-                self.simulator.collision_forces, requires_grad=False
-            )
-            
-            # Update simulator state for next step
-            self.simulator.set_init_state(
-                self.simulator.wp_states[-1].wp_x,
-                self.simulator.wp_states[-1].wp_v,
-            )
-        
-            # Get new object state
-            x = wp.to_torch(self.simulator.wp_states[-1].wp_x, requires_grad=False)
-            
-            # Combine object and robot states (use final robot position)
-            combined_state = torch.cat([x, movement_result['interpolated_dynamic_points'][-1]], dim=0)
-            predicted_states[i] = combined_state
-            
-        return predicted_states  # [n_look_ahead, n_particles, 3]
     
 
 class PhysTwinPlanner(PlannerWrapper):

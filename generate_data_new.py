@@ -1,6 +1,5 @@
 from PhysTwin.qqtt import InvPhyTrainerWarp
 from PhysTwin.config_manager import PhysTwinConfig
-from PhysTwin.control import PhysTwinRolloutFn
 from shared.reward import RewardFn
 import torch
 import torch.multiprocessing as mp
@@ -70,9 +69,6 @@ class PhysTwin:
             actual_trajectory: [n_look_ahead*downsample_rate+1, n_particles, 3] - actual deformation trajectory at GNN frame rate
             downsampled_indices: [n_look_ahead] - indices of the downsampled frames
         """
-
-        # Create PhysTwin model rollout function with PhysTwin robot mask
-        phystwin_rollout_fn = PhysTwinRolloutFn(self.trainer, None, self.device)
         
         # Interpolate action sequence to match PhysTwin's native frame rate
         # GNN operates at downsampled rate, PhysTwin at original rate
@@ -81,9 +77,9 @@ class PhysTwin:
         else:
             interpolated_actions = action_seq
             
-        # Get actual deformation from PhysTwin using rollout_single_sequence
+        # Get actual deformation from PhysTwin using rollout_act_seq
         # print("Computing actual deformation with PhysTwin...")
-        predicted_states = phystwin_rollout_fn.rollout_single_sequence(
+        predicted_states = self.trainer.rollout_act_seq(
             initial_object_state, initial_robot_state, interpolated_actions, init_finger
         )  # [n_look_ahead * downsample_rate, n_particles, 3]
             
