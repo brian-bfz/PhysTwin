@@ -109,8 +109,8 @@ def push_act_seq(object_vertices, robot_vertices, n_frames):
         act_seq: [n_frames, 2] - robot velocity sequence (x, y components only)
     """
     from shared.utils import random_direction
-    min_speed = 0.004
-    max_speed = 0.008
+    min_speed = 0.00333
+    max_speed = 0.00667
     device = object_vertices.device
     
     # select a direction to move toward
@@ -152,8 +152,8 @@ def lift_act_seq(n_frames, device='cpu'):
     Returns:
         act_seq: [n_frames, 3] - robot velocity sequence
     """
-    min_speed = 0.004
-    max_speed = 0.008
+    min_speed = 0.00333
+    max_speed = 0.00667
     
     # Initialize action sequence
     act_seq = torch.zeros((n_frames, 3), dtype=torch.float32, device=device)
