@@ -1469,7 +1469,6 @@ class InvPhyTrainerWarp:
                 adj_matrix = construct_edges_from_tensor(initial_x[object_indices], adj_thresh, topk)
                 topological_edges = torch.zeros(1, total_particles, total_particles, device=cfg.device)
                 topological_edges[0, :n_object_particles, :n_object_particles] = adj_matrix.unsqueeze(0)  # [1, particles, particles]
-                topological_edges = topological_edges.squeeze(0).cpu()
                 logger.info(f"Constructed topological edges with adj_thresh={adj_thresh}, topk={topk}")
 
                 # Setting configs for collision edges display
@@ -1505,6 +1504,7 @@ class InvPhyTrainerWarp:
                     initial_attrs, 
                     particle_nums,
                 )
+            topological_edges = topological_edges.squeeze(0).cpu()
             
             # Object particles in green
             gnn_obj_pcd = o3d.geometry.PointCloud()
