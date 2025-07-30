@@ -1428,8 +1428,8 @@ class InvPhyTrainerWarp:
             
             # Get initial positions
             initial_x = wp.to_torch(self.simulator.wp_states[0].wp_x, requires_grad=False).clone()
-            object_indices = fps_rad_tensor(initial_x[:self.num_all_points], gnn_config['train']['particle']['fps_radius'])
-            robot_indices = fps_rad_tensor(self.robot_controller.dynamic_points, gnn_config['train']['particle']['fps_radius']) 
+            object_indices = fps_rad_tensor(initial_x[:self.num_all_points], gnn_config['dataset']['fps_radius'])
+            robot_indices = fps_rad_tensor(self.robot_controller.dynamic_points, gnn_config['dataset']['fps_radius']) 
 
             n_history = gnn_config['train']['n_history']
             
@@ -1461,9 +1461,9 @@ class InvPhyTrainerWarp:
             logger.info(f"GNN rollout initialized with {n_object_particles} object + {n_robot_particles} robot particles")
 
             # Construct topological edges if enabled
-            if gnn_config['train']['edges']['topological']['enabled']:
-                adj_thresh = gnn_config['train']['edges']['topological']['adj_thresh']
-                topk = gnn_config['train']['edges']['topological']['topk']
+            if gnn_config['edges']['topological']['enabled']:
+                adj_thresh = gnn_config['edges']['topological']['adj_thresh']
+                topk = gnn_config['edges']['topological']['topk']
                 
                 # Construct topological edges using first frame positions
                 adj_matrix = construct_edges_from_tensor(initial_x[object_indices], adj_thresh, topk)
@@ -1472,8 +1472,8 @@ class InvPhyTrainerWarp:
                 logger.info(f"Constructed topological edges with adj_thresh={adj_thresh}, topk={topk}")
 
                 # Setting configs for collision edges display
-                adj_thresh = gnn_config['train']['edges']['collision']['adj_thresh']
-                topk = gnn_config['train']['edges']['collision']['topk']
+                adj_thresh = gnn_config['edges']['collision']['adj_thresh']
+                topk = gnn_config['edges']['collision']['topk']
                 tool_mask = torch.zeros(gnn_x.shape[0], dtype=torch.bool, device='cpu')
                 tool_mask[n_object_particles:] = True
                 tool_mask = tool_mask.cpu()
@@ -1484,7 +1484,7 @@ class InvPhyTrainerWarp:
                 logger.info("Topological edges disabled in config - initialized as zero matrix")
             
             # Initialize rollout
-            if gnn_config['train']['edges']['topological']['enabled']:
+            if gnn_config['edges']['topological']['enabled']:
                 gnn_rollout = Rollout(
                     gnn_model, 
                     gnn_config, 
@@ -1624,7 +1624,7 @@ class InvPhyTrainerWarp:
                     vis.update_geometry(gnn_robot_pcd)
                     
                     # Update GNN edges
-                    if gnn_config['train']['edges']['topological']['enabled']:
+                    if gnn_config['edges']['topological']['enabled']:
                         gnn_line_sets = visualize_edges(gnn_x, topological_edges, tool_mask, adj_thresh, topk, False, [[1.0, 0.6, 0.2], [0.3, 0.6, 0.3]])  # light orange, light green
                         for line_set in gnn_line_sets:
                             if line_set is not None:
