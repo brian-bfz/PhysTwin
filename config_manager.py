@@ -11,11 +11,7 @@ from pathlib import Path
 from typing import Dict, Optional, Tuple
 
 from .qqtt.utils import logger, cfg
-from .paths import (
-    CONFIG_CLOTH, CONFIG_REAL, DATA_DIFFERENT_TYPES, 
-    get_case_paths, URDF_XARM7, GAUSSIAN_OUTPUT_DIR,
-    DATA_BG_IMG, TEMP_EXPERIMENTS_DIR
-)
+from .paths import *
 from .robot import RobotLoader, RobotController
 
 

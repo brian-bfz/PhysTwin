@@ -1429,17 +1429,17 @@ class InvPhyTrainerWarp:
             # Get initial positions
             initial_x = wp.to_torch(self.simulator.wp_states[0].wp_x, requires_grad=False).clone()
             object_indices = fps_rad_tensor(initial_x[:self.num_all_points], gnn_config['dataset']['fps_radius'])
-            robot_indices = fps_rad_tensor(self.robot_controller.dynamic_points, gnn_config['dataset']['fps_radius']) 
+            # robot_indices = fps_rad_tensor(self.robot_controller.dynamic_points, gnn_config['dataset']['fps_radius']) 
 
             n_history = gnn_config['train']['n_history']
             
             # Total particles (object + robot)
             n_object_particles = len(object_indices)
-            n_robot_particles = len(robot_indices)
+            n_robot_particles = self.robot_controller.dynamic_points.shape[0]
             total_particles = n_object_particles + n_robot_particles
             
             # Create initial state by concatenating object and robot positions
-            initial_positions = torch.cat([initial_x[object_indices], self.robot_controller.dynamic_points[robot_indices]], dim=0)
+            initial_positions = torch.cat([initial_x[object_indices], self.robot_controller.dynamic_points], dim=0)
             
             initial_states = initial_positions.unsqueeze(0) # [1, particles, 3]
 
@@ -1769,7 +1769,7 @@ class InvPhyTrainerWarp:
             # GNN prediction logic
             if gnn_rollout is not None:
                 # Store current robot positions for delta calculation
-                robot_positions_history.append(self.robot_controller.dynamic_points[robot_indices].clone())
+                robot_positions_history.append(self.robot_controller.dynamic_points.clone())
                 
                 # Keep only the last downsample_rate+1 frames for delta calculation
                 if len(robot_positions_history) > downsample_rate + 1:

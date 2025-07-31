@@ -133,7 +133,31 @@ class RobotLoader:
         Returns:
             List of finger meshes
         """
-        gripper_openness -= 0.15
+
+        vertices = self.get_finger_vertices(gripper_openness)
+        result_meshes = []
+        idx = 0
+        for origin_mesh in self.finger_meshes:
+            # Update mesh vertices
+            mesh_copy = o3d.geometry.TriangleMesh(origin_mesh)
+            mesh_copy.vertices = o3d.utility.Vector3dVector(vertices[idx:idx+len(origin_mesh.vertices)])
+            idx += len(origin_mesh.vertices)
+            result_meshes.append(mesh_copy)
+
+        return result_meshes
+
+    def get_finger_vertices(self, gripper_openness=0.0):
+        """
+        Get finger vertices as numpy array.
+        
+        Args:
+            gripper_openness: float [0,1] - gripper opening amount
+            transform: np.ndarray [4,4] - transformation matrix to apply (optional)
+            
+        Returns:
+            np.ndarray [n_vertices, 3] - finger vertices
+        """
+        gripper_openness -= 0.1
         # Calculate joint positions from gripper openness
         g = 800 * gripper_openness  # gripper openness
         g = (800 - g) * 180 / np.pi
@@ -163,7 +187,7 @@ class RobotLoader:
         poses = self.compute_mesh_poses(base_qpos, link_names=self.finger_link_names)
         
         # Create copies of meshes and apply transforms
-        result_meshes = []
+        vertices_list = []
         for i, origin_vertices in enumerate(self.finger_vertices):
             vertices = np.copy(origin_vertices)
             
@@ -174,24 +198,7 @@ class RobotLoader:
             if self.transform is not None:
                 vertices = vertices @ self.transform[:3, :3].T + self.transform[:3, 3]
             
-            # Update mesh vertices
-            mesh_copy = o3d.geometry.TriangleMesh(self.finger_meshes[i])
-            mesh_copy.vertices = o3d.utility.Vector3dVector(vertices)
-            result_meshes.append(mesh_copy)
-
-        return result_meshes
-
-    def get_finger_vertices(self, gripper_openness=0.0):
-        """
-        Get finger vertices as numpy array.
-        
-        Args:
-            gripper_openness: float [0,1] - gripper opening amount
-            transform: np.ndarray [4,4] - transformation matrix to apply (optional)
+            vertices_list.append(vertices)
             
-        Returns:
-            np.ndarray [n_vertices, 3] - concatenated finger vertices
-        """
-        finger_meshes = self.get_finger_mesh(gripper_openness)
-        vertices_list = [np.asarray(mesh.vertices) for mesh in finger_meshes]
-        return np.concatenate(vertices_list, axis=0) 
+        return np.concatenate(vertices_list, axis=0)
+    
