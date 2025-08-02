@@ -8,7 +8,7 @@ pip install rtree
 pip install pyrender
 pip install h5py
 
-conda install -y pytorch==2.4.0 torchvision==0.19.0 torchaudio==2.4.0 pytorch-cuda=12.1 -c pytorch -c nvidia
+conda install -y pytorch==2.4.0 torchvision==0.19.0 pytorch-cuda=12.1 -c pytorch -c nvidia
 pip install stannum
 pip install termcolor
 pip install fvcore
@@ -16,14 +16,24 @@ pip install wandb
 pip install moviepy imageio
 conda install -y opencv
 pip install cma
+pip install --no-index --no-cache-dir pytorch3d -f https://dl.fbaipublicfiles.com/pytorch3d/packaging/wheels/py310_cu121_pyt240/download.html
 
 # Install the env for realsense camera
 pip install Cython
+pip install pyrealsense2
 pip install atomics
 pip install pynput
 
-pip install git+https://github.com/IDEA-Research/Grounded-SAM-2.git
-pip install git+https://github.com/IDEA-Research/GroundingDINO.git
+# Install the env for grounded-sam-2
+git clone https://github.com/IDEA-Research/Grounded-SAM-2.git
+cd Grounded-SAM-2/checkpoints/
+bash download_ckpts.sh
+cd ../gdino_checkpoints/
+bash download_ckpts.sh
+cd ../
+pip install -e .
+pip install --no-build-isolation -e grounding_dino --use-pep517
+cd ../
 
 # Install the env for image upscaler using SDXL
 pip install diffusers
@@ -33,4 +43,4 @@ pip install gsplat==1.4.0
 pip install kornia
 cd gaussian_splatting/
 pip install submodules/simple-knn/
-cd ..
+cd ../
