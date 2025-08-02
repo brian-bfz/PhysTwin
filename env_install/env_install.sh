@@ -22,6 +22,9 @@ pip install Cython
 pip install atomics
 pip install pynput
 
+pip install git+https://github.com/IDEA-Research/Grounded-SAM-2.git
+pip install git+https://github.com/IDEA-Research/GroundingDINO.git
+
 # Install the env for image upscaler using SDXL
 pip install diffusers
 pip install accelerate
