@@ -6,7 +6,7 @@ import torch.multiprocessing as mp
 import h5py
 import numpy as np
 import os
-from .paths import *
+from ..paths import *
 
 class PhysTwin:
     """
@@ -303,14 +303,14 @@ if __name__ == "__main__":
         output_file = generate_data((args.case_name, args.n_episodes, args.n_frames, args.output_file, args.mode, None))
 
     if world_size > 1:
-        from .scripts.merge_dataset import merge_datasets
+        from ..scripts.merge_dataset import merge_datasets
         output_file = GENERATED_DATA_DIR / f"{args.output_file}.h5"
         merge_datasets(output_files, output_file)
         for file in output_files:
             os.remove(file)
 
     if args.video:
-        from .visualize_data import video_from_data
+        from ..visualize_data import video_from_data
         
         robot = PhysTwinConfig(args.case_name).get_robot_controller(device='cpu')
         meshes = robot.finger_meshes

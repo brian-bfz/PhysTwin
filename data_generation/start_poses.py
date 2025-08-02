@@ -1,12 +1,12 @@
-from .qqtt import InvPhyTrainerWarp
-from .config_manager import PhysTwinConfig
+from ..qqtt import InvPhyTrainerWarp
+from ..config_manager import PhysTwinConfig
 import argparse
 import torch
 import numpy as np
 import os
 import h5py
 import pickle
-from .paths import GENERATED_DATA_DIR
+from ..paths import GENERATED_DATA_DIR
 
 def create_push_action(grid_point, wait_frames):
     """
