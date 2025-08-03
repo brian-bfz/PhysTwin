@@ -96,21 +96,34 @@ def random_direction_3d(device='cpu'):
     direction = direction / torch.norm(direction)
     return direction
 
-def push_act_seq(object_vertices, robot_vertices, n_frames):
+def push_act_seq(config, object_vertices, robot_vertices):
     """
     Generate a random pushing action sequence for 2D robot movements.
     
     Args:
+        config: dict containing:
+            speed: dict containing:
+                min: float - minimum speed
+                max: float - maximum speed
+            pause_duration: dict containing:
+                min: int - minimum pause duration
+                max: int - maximum pause duration
+            move_duration: dict containing:
+                min: int - minimum move duration
+                max: int - maximum move duration
+            n_frames: int - number of frames in the sequence
         object_vertices: [n_obj_particles, 3] - object vertex positions
         robot_vertices: [n_robot_particles, 3] - robot vertex positions  
-        n_frames: int - number of frames in the sequence
         
     Returns:
         act_seq: [n_frames, 2] - robot velocity sequence (x, y components only)
     """
     from shared.utils import random_direction
-    min_speed = 0.00333
-    max_speed = 0.00667
+    min_speed = config["speed"]["min"]
+    max_speed = config["speed"]["max"]
+    pause = config["pause_duration"]
+    move = config["move_duration"]
+    n_frames = config["n_frames"]
     device = object_vertices.device
     
     # select a direction to move toward
@@ -127,7 +140,7 @@ def push_act_seq(object_vertices, robot_vertices, n_frames):
     act_seq = torch.zeros((n_frames, 2), dtype=torch.float32, device=object_vertices.device)
     
     while current_frame < n_frames:
-        move_duration = torch.randint(30, 50, (1,)).item()
+        move_duration = torch.randint(move["min"], move["max"], (1,)).item()
         move_duration = min(move_duration, n_frames - current_frame)
 
         speed = torch.rand(1).item() * (max_speed - min_speed) + min_speed
@@ -136,12 +149,12 @@ def push_act_seq(object_vertices, robot_vertices, n_frames):
         
         current_frame += move_duration
         
-        pause_duration = torch.randint(0, 10, (1,)).item()
+        pause_duration = torch.randint(pause["min"], pause["max"], (1,)).item()
         current_frame += pause_duration
 
     return act_seq
 
-def lift_act_seq(n_frames, device='cpu'):
+def lift_act_seq(config, device='cpu'):
     """
     Generate a random sequence of 3D movements and pauses
     Cumulative z displacement is always non-negative
@@ -152,8 +165,11 @@ def lift_act_seq(n_frames, device='cpu'):
     Returns:
         act_seq: [n_frames, 3] - robot velocity sequence
     """
-    min_speed = 0.00333
-    max_speed = 0.00667
+    min_speed = config["speed"]["min"]
+    max_speed = config["speed"]["max"]
+    n_frames = config["n_frames"]
+    pause = config["pause_duration"]
+    move = config["move_duration"]
     
     # Initialize action sequence
     act_seq = torch.zeros((n_frames, 3), dtype=torch.float32, device=device)
@@ -162,7 +178,7 @@ def lift_act_seq(n_frames, device='cpu'):
     
     while current_frame < n_frames:
         # Generate movement phase
-        move_duration = torch.randint(30, 50, (1,)).item()
+        move_duration = torch.randint(move["min"], move["max"], (1,)).item()
         move_duration = min(move_duration, n_frames - current_frame)
         
         rd = random_direction_3d(device)
@@ -179,7 +195,7 @@ def lift_act_seq(n_frames, device='cpu'):
         # print(cumulative_z)
         
         # Add pause between movements
-        pause_duration = torch.randint(0, 10, (1,)).item()
+        pause_duration = torch.randint(pause["min"], pause["max"], (1,)).item()
         current_frame += pause_duration
     
     act_seq[:, 2] = -act_seq[:, 2] # z axis is inverted
@@ -201,7 +217,10 @@ def generate_data(args):
         output_file: str - output file full path
     """
     torch.set_grad_enabled(False)
-    case_name, n_episodes, n_frames, output_file, mode, rank = args
+    config, n_episodes, output_file, mode, rank = args
+    case_name = config["case_name"]
+    n_frames = config["n_frames"]
+
     if rank is not None: 
         device = f'cuda:{rank}'
     else:
@@ -248,9 +267,9 @@ def generate_data(args):
 
             # Generate action sequence
             if mode == "push":
-                act_seq = push_act_seq(object_vertices, robot_vertices, n_frames)
+                act_seq = push_act_seq(config, object_vertices, robot_vertices)
             else:
-                act_seq = lift_act_seq(n_frames, device)
+                act_seq = lift_act_seq(config, device)
                     
             # Compute trajectory with PhysTwin
             trajectory, _ = phystwin.compute_deformation(object_vertices, robot_vertices, act_seq, init_finger=finger)
@@ -277,13 +296,21 @@ def generate_data(args):
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--case_name", type=str, required=True)
+    parser.add_argument("--case_name", type=str, default=None)
     parser.add_argument("--n_episodes", type=int, required=True)
-    parser.add_argument("--n_frames", type=int, required=True)
+    parser.add_argument("--n_frames", type=int, default=None)
     parser.add_argument("--output_file", type=str, required=True)
     parser.add_argument("--mode", type=str, choices=["push", "lift"], required=True)
     parser.add_argument("--video", action="store_true")
     args = parser.parse_args()
+
+    from GNN.utils import load_yaml
+    config = load_yaml("PhysTwin/data_generation/config.yaml")
+    config = config["trajectory"]
+    if args.n_frames is not None:
+        config["n_frames"] = args.n_frames
+    if args.case_name is not None:
+        config["case_name"] = args.case_name
     
     mp.set_start_method('spawn')
     world_size = torch.cuda.device_count()
@@ -291,16 +318,15 @@ if __name__ == "__main__":
         with mp.Pool(world_size) as pool:
             output_files = pool.map(generate_data, [
                 (
-                    args.case_name, 
-                    args.n_episodes // world_size + (1 if args.n_episodes % world_size > i else 0), 
-                    args.n_frames, 
+                    config, 
+                    args.n_episodes // world_size + (1 if args.n_episodes % world_size > i else 0),
                     args.output_file, 
                     args.mode, 
                     i
                 ) for i in range(world_size)
             ])
     else:
-        output_file = generate_data((args.case_name, args.n_episodes, args.n_frames, args.output_file, args.mode, None))
+        output_file = generate_data((config, args.output_file, args.mode, None))
 
     if world_size > 1:
         from ..scripts.merge_dataset import merge_datasets
@@ -312,7 +338,7 @@ if __name__ == "__main__":
     if args.video:
         from ..visualize_data import video_from_data
         
-        robot = PhysTwinConfig(args.case_name).get_robot_controller(device='cpu')
+        robot = PhysTwinConfig(case_name=config["case_name"]).get_robot_controller(device='cpu')
         meshes = robot.finger_meshes
         with h5py.File(output_file, 'r') as f:
             for i in range(args.n_episodes):

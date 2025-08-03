@@ -156,7 +156,7 @@ def save_last_frames(full_data_path, poses_data_path, target_points, finger_pos)
         f.create_dataset('target', data=target_points)
         f.create_dataset('finger', data=finger_pos)
 
-def generate_push_poses(case_name, margin, cell_size, max_dist, min_dist, wait):
+def generate_push_poses(config):
     """
     Generate a grid that spans the entire object + margin with cell_size x cell_size cells
     For each grid point, determine if it's at most max_dist away from an object point, and at least min_dist away from every object point
@@ -164,6 +164,13 @@ def generate_push_poses(case_name, margin, cell_size, max_dist, min_dist, wait):
     Tell generate_data to save to PhysTwin/generated_data/{case_name}/full_push_poses.h5
     Create a file PhysTwin/generated_data/{case_name}/push_poses.h5 that contains the last frame of each trajectory
     """
+    case_name = config["case_name"]
+    margin = config["margin"]
+    cell_size = config["cell_size"]
+    max_dist = config["max_dist"]
+    min_dist = config["min_dist"]
+    wait = config["wait"]
+
     print(f"Generating push poses for case: {case_name}")
     
     # Initialize PhysTwin
@@ -230,7 +237,7 @@ def generate_push_poses(case_name, margin, cell_size, max_dist, min_dist, wait):
     save_last_frames(full_data_path, poses_data_path, valid_points, finger_pos)
     return poses_data_path
 
-def generate_lift_poses(case_name, cell_size, wait):
+def generate_lift_poses(config):
     """
     Generate a grid that spans the entire object with cell_size x cell_size cells
     For each grid point, find the object point that is directly below it
@@ -238,6 +245,10 @@ def generate_lift_poses(case_name, cell_size, wait):
     Tell generate_data to save to PhysTwin/generated_data/{case_name}/full_lift_poses.h5
     Create a file PhysTwin/generated_data/{case_name}/lift_poses.h5 that contains the last frame of each trajectory
     """
+    case_name = config["case_name"]
+    cell_size = config["cell_size"]
+    wait = config["wait"]
+    
     print(f"Generating lift poses for case: {case_name}")
     
     # Initialize PhysTwin
@@ -332,19 +343,35 @@ def visualize_poses(poses_data_path):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--case_name", type=str, required=True)
+    parser.add_argument("--case_name", type=str, default=None)
     parser.add_argument("--mode", type=str, choices=["push", "lift"], required=True)
-    parser.add_argument("--margin", type=float, default=0.16, help="Margin around object for grid generation (push)")
-    parser.add_argument("--cell_size", type=float, default=0.04, help="Size of grid cells")
-    parser.add_argument("--max_dist", type=float, default=0.08, help="Maximum distance from object point (push)")
-    parser.add_argument("--min_dist", type=float, default=0.03, help="Minimum distance from all object points (push)")
-    parser.add_argument("--wait", type=int, default=10, help="Number of frames to wait for object to stabilize")
+    parser.add_argument("--margin", type=float, default=None, help="Margin around object for grid generation (push)")
+    parser.add_argument("--cell_size", type=float, default=None, help="Size of grid cells")
+    parser.add_argument("--max_dist", type=float, default=None, help="Maximum distance from object point (push)")
+    parser.add_argument("--min_dist", type=float, default=None, help="Minimum distance from all object points (push)")
+    parser.add_argument("--wait", type=int, default=None, help="Number of frames to wait for object to stabilize")
     args = parser.parse_args()
+
+    from GNN.utils import load_yaml
+    config = load_yaml("PhysTwin/data_generation/config.yaml")
+    config = config["start_pose"]
+    if args.case_name is not None:
+        config["case_name"] = args.case_name
+    if args.margin is not None:
+        config["margin"] = args.margin
+    if args.cell_size is not None:
+        config["cell_size"] = args.cell_size
+    if args.max_dist is not None:
+        config["max_dist"] = args.max_dist
+    if args.min_dist is not None:
+        config["min_dist"] = args.min_dist
+    if args.wait is not None:
+        config["wait"] = args.wait
     
     if args.mode == "push":
-        poses_data_path = generate_push_poses(args.case_name, args.margin, args.cell_size, args.max_dist, args.min_dist, args.wait)
+        poses_data_path = generate_push_poses(config)
     elif args.mode == "lift":
-        poses_data_path = generate_lift_poses(args.case_name, args.cell_size, args.wait)
+        poses_data_path = generate_lift_poses(config)
     # poses_data_path = "PhysTwin/generated_data/single_push_rope/lift_poses.h5"
 
     visualize_poses(poses_data_path)
