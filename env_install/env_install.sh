@@ -25,15 +25,8 @@ pip install atomics
 pip install pynput
 
 # Install the env for grounded-sam-2
-git clone https://github.com/IDEA-Research/Grounded-SAM-2.git
-cd Grounded-SAM-2/checkpoints/
-bash download_ckpts.sh
-cd ../gdino_checkpoints/
-bash download_ckpts.sh
-cd ../
-pip install -e .
-pip install --no-build-isolation -e grounding_dino --use-pep517
-cd ../
+pip install git+https://github.com/IDEA-Research/Grounded-SAM-2.git
+pip install git+https://github.com/IDEA-Research/GroundingDINO.git
 
 # Install the env for image upscaler using SDXL
 pip install diffusers
