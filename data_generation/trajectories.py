@@ -112,6 +112,7 @@ def push_act_seq(config, object_vertices, robot_vertices):
                 min: int - minimum move duration
                 max: int - maximum move duration
             n_frames: int - number of frames in the sequence
+            p_random: float - probability that the robot moves in a random direction instead of toward the object
         object_vertices: [n_obj_particles, 3] - object vertex positions
         robot_vertices: [n_robot_particles, 3] - robot vertex positions  
         
@@ -124,10 +125,11 @@ def push_act_seq(config, object_vertices, robot_vertices):
     pause = config["pause_duration"]
     move = config["move_duration"]
     n_frames = config["n_frames"]
+    p_random = config["p_random"]
     device = object_vertices.device
     
     # select a direction to move toward
-    if torch.rand(1).item() < 0.2: # 25% chance to move in a random direction, possibly not toward the object
+    if torch.rand(1).item() < p_random:
         rd = random_direction(device)[:2] # [2] tensor
     else: # 80% chance to move toward a randomly selected object point
         random_idx = torch.randint(0, object_vertices.shape[0], (1,)).item()
