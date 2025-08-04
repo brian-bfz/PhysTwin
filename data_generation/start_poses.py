@@ -323,9 +323,11 @@ def generate_lift_poses(config):
     
 def visualize_poses(poses_data_path):
     """
-    Visualize the poses in the poses file
+    Visualize the poses in the poses file and save the visualization as an image.
     """
     import open3d as o3d
+    import numpy as np
+
     with h5py.File(poses_data_path, 'r') as f:
         object = f['object'][0]
         targets = f['target'][:]
@@ -335,11 +337,31 @@ def visualize_poses(poses_data_path):
     object_pcd.points = o3d.utility.Vector3dVector(object)
     object_pcd.paint_uniform_color([0, 1, 0])
 
+    save_path = os.path.splitext(poses_data_path)[0] + ".png"
+
     targets[:, 2] += -0.003 # slight offset to avoid z-fighting
     target_pcd = o3d.geometry.PointCloud()
     target_pcd.points = o3d.utility.Vector3dVector(targets)
     target_pcd.paint_uniform_color([1, 0, 0])
-    o3d.visualization.draw_geometries([object_pcd, target_pcd])
+
+    # Create a visualizer and add geometries
+    vis = o3d.visualization.Visualizer()
+    vis.create_window(visible=True)
+    vis.add_geometry(object_pcd)
+    vis.add_geometry(target_pcd)
+    vis.poll_events()
+    vis.update_renderer()
+
+    # Capture and save the image
+    img = vis.capture_screen_float_buffer(do_render=True)
+    img_np = (255 * np.asarray(img)).astype(np.uint8)
+    from PIL import Image
+    Image.fromarray(img_np).save(save_path)
+    print(f"Saved visualization to {save_path}")
+
+    # Keep the window open for user to view
+    vis.run()
+    vis.destroy_window()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
