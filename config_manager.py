@@ -7,6 +7,7 @@ import glob
 import pickle
 import json
 import numpy as np
+import torch
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
@@ -128,8 +129,10 @@ class PhysTwinConfig:
         """
         
         # Get initial pose
+        R = np.array([[0.0, -1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, -1.0]])
+        
         init_pose = np.eye(4)
-        init_pose[:3, :3] = np.array([[0.0, -1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, -1.0]])
+        init_pose[:3, :3] = R
 
         if robot_type == "interactive":
             init_pose[:3, 3] = [0.2, 0.0, 0.23]
@@ -145,7 +148,7 @@ class PhysTwinConfig:
         )
         
         # Create robot controller with robot loader and specified device
-        return RobotController(robot_loader, 0.0, n_ctrl_parts, device)
+        return RobotController(robot_loader, torch.zeros(n_ctrl_parts, dtype=torch.float32, device=device), n_ctrl_parts, device, cfg.num_substeps, cfg.dt)
     
     def get_paths(self) -> Dict[str, Path]:
         """Get all relevant paths for the case"""
