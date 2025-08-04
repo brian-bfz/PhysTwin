@@ -186,7 +186,7 @@ class RobotController:
         
         return self.get_flattened_dynamic_points()
         
-    def fine_robot_movement(self, target_change, finger_change=None, rot_change=None):
+    def fine_robot_movement(self, target_change, collision_forces, finger_change=None, rot_change=None):
         """
         Smoothly move robot with interpolated motion (for simulation).
         
@@ -213,12 +213,14 @@ class RobotController:
         # Handle finger_change
         if finger_change is None:
             finger_change = torch.zeros(self.n_ctrl_parts, dtype=torch.float32, device=self.device)
+
+        close_flag = self.get_close_flag(collision_forces)
             
         # Update is_closing flag based on finger_change
         self.is_closing[finger_change > 0] = False
         self.is_closing[finger_change < 0] = True
-        finger_change[self.is_closing & ~self.close_flag] = 0.0
-        finger_change[self.is_closing & self.close_flag] = -0.05
+        finger_change[self.is_closing & ~close_flag] = 0.0
+        finger_change[self.is_closing & close_flag] = -0.05
         finger_change[~self.is_closing] = 0.05
 
         # Update translation
@@ -274,9 +276,9 @@ class RobotController:
             'dynamic_omega': dynamic_omega
         }
 
-    def set_close_flag(self, collision_forces):
+    def get_close_flag(self, collision_forces):
         """
-        Set close flag based on collision forces.
+        Get close flag based on collision forces.
         
         Args:
             collision_forces: torch.Tensor [n_ctrl_parts * n_links, 3] - collision forces
@@ -286,7 +288,7 @@ class RobotController:
         filter_forces = torch.einsum(
             "nij,nij->ni", collision_forces, self.current_force_judge
         )
-        self.close_flag = torch.all(filter_forces > 3e4, dim=1)
+        return torch.all(filter_forces > 3e4, dim=1)
 
     def set_to_match_vertices(self, target_vertices):
         """

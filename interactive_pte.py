@@ -81,7 +81,7 @@ if __name__ == "__main__":
         base_dir=config.get_temp_base_dir(),
         pure_inference_mode=True,
         static_meshes=static_meshes,
-        robot_controller=config.get_robot_controller("interactive"),
+        robot_controller=config.get_robot_controller(robot_type="interactive", n_ctrl_parts=args.n_ctrl_parts),
     )
 
     # Load GNN model and config

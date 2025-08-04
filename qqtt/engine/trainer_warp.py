@@ -135,7 +135,7 @@ class InvPhyTrainerWarp:
                 # Use provided robot controller
                 self.robot_controller = robot_controller
                 # Create protected copies of robot data
-                self.dynamic_meshes = self.robot_controller.robot_loader.get_finger_mesh(self.robot_controller.current_finger)
+                self.dynamic_meshes = self.robot_controller.get_finger_meshes()
             else:
                 self.dynamic_meshes = []
 
@@ -221,7 +221,7 @@ class InvPhyTrainerWarp:
             gt_object_motions_valid=self.object_motions_valid,
             self_collision=cfg.self_collision,
             static_meshes=self.dynamic_meshes + self.static_meshes,
-            dynamic_points=self.robot_controller.dynamic_points,
+            dynamic_points=self.robot_controller.get_flattened_dynamic_points(),
             disable_backward=True,
         )
         
@@ -618,33 +618,41 @@ class InvPhyTrainerWarp:
         target_change = np.zeros((self.n_ctrl_parts, 3))
         for key in self.pressed_keys:
             if key in self.key_mappings:
+                # Skip finger and rotation keys for both control parts
                 if (
-                    key == "n"
-                    or key == "m"
-                    or key == "z"
-                    or key == "x"
-                    or key == "c"
-                    or key == "v"
+                    key == "n" or key == "m"  # First control part finger
+                    or key == "z" or key == "x" or key == "c" or key == "v"  # First control part rotation
+                    or key == "4" or key == "5"  # Second control part finger
+                    or key == "7" or key == "8" or key == "9" or key == "0"  # Second control part rotation
                 ):
                     pass
                 else:
                     idx, change = self.key_mappings[key]
                     target_change[idx] += change
-        return target_change
+        return torch.tensor(target_change, dtype=torch.float32, device=cfg.device)
 
     def get_finger_change(self):
+        finger_changes = torch.zeros(self.n_ctrl_parts, dtype=torch.float32, device=cfg.device)
         for key in self.pressed_keys:
             if key in self.key_mappings:
+                # First control part finger controls (n, m)
                 if key == "n" or key == "m":
-                    return self.key_mappings[key]
-        return 0.0
+                    finger_changes[0] = self.key_mappings[key]
+                # Second control part finger controls (4, 5)
+                elif self.n_ctrl_parts >= 2 and (key == "4" or key == "5"):
+                    finger_changes[1] = self.key_mappings[key]
+        return finger_changes
 
     def get_rot_change(self):
         for key in self.pressed_keys:
             if key in self.key_mappings:
+                # First control part rotation controls (z, x, c, v)
                 if key == "z" or key == "x" or key == "c" or key == "v":
-                    return np.array(self.key_mappings[key])
-        return np.zeros(3)
+                    return torch.tensor(self.key_mappings[key], dtype=torch.float32, device=cfg.device)
+                # Second control part rotation controls (7, 8, 9, 0)
+                elif self.n_ctrl_parts >= 2 and (key == "7" or key == "8" or key == "9" or key == "0"):
+                    return torch.tensor(self.key_mappings[key], dtype=torch.float32, device=cfg.device)
+        return torch.zeros(3, dtype=torch.float32, device=cfg.device)
 
     def init_control_ui(self):
 
@@ -1267,36 +1275,52 @@ class InvPhyTrainerWarp:
 
         self.n_ctrl_parts = n_ctrl_parts
         print("UI Controls:")
-        print("- Set 1: WASD (XY movement), QE (Z movement)")
-        print("- Set 2: IJKL (XY movement), UO (Z movement)")
+        print("- Control Part 1: WASD (XY movement), QE (Z movement), NM (finger), ZXCV (rotation)")
+        if n_ctrl_parts >= 2:
+            print("- Control Part 2: UIOJKL (translation), 45 (finger), 7890 (rotation)")
+            print("- Note: Original IJKL/UO controls disabled when n_ctrl_parts >= 2")
+        else:
+            print("- Control Part 2: IJKL (XY movement), UO (Z movement)")
         print("- 6: Save current object point cloud as target")
         self.inv_ctrl = -1.0 if inv_ctrl else 1.0
         self.key_mappings = {
-            # Set 1 controls
+            # Set 1 controls (first control part)
             "w": (0, np.array([0.005, 0, 0]) * self.inv_ctrl),
             "s": (0, np.array([-0.005, 0, 0]) * self.inv_ctrl),
             "a": (0, np.array([0, -0.005, 0]) * self.inv_ctrl),
             "d": (0, np.array([0, 0.005, 0]) * self.inv_ctrl),
             "e": (0, np.array([0, 0, 0.005])),
             "q": (0, np.array([0, 0, -0.005])),
-            # Set 2 controls
-            "i": (1, np.array([0.005, 0, 0]) * self.inv_ctrl),
-            "k": (1, np.array([-0.005, 0, 0]) * self.inv_ctrl),
-            "j": (1, np.array([0, -0.005, 0]) * self.inv_ctrl),
-            "l": (1, np.array([0, 0.005, 0]) * self.inv_ctrl),
-            "o": (1, np.array([0, 0, 0.005])),
-            "u": (1, np.array([0, 0, -0.005])),
-            # Set the finger
+            # Set the finger (first control part)
             "n": 0.05,
             "m": -0.05,
-            # Set the rotation
+            # Set the rotation (first control part)
             "z": [0, 0, 2.0 / 180 * np.pi],
             "x": [0, 0, -2.0 / 180 * np.pi],
             "c": [2.0 / 180 * np.pi, 0, 0],
             "v": [-2.0 / 180 * np.pi, 0, 0],
-            # Save target snapshot
-            # "6": "save_target_snapshot",
         }
+        
+        # Add second control part mappings if we have 2 or more control parts
+        if n_ctrl_parts >= 2:
+            self.key_mappings.update({
+                # Set 2 controls (second control part) - translation using uiojkl
+                "i": (1, np.array([0.005, 0, 0]) * self.inv_ctrl),  # Forward
+                "k": (1, np.array([-0.005, 0, 0]) * self.inv_ctrl), # Backward  
+                "j": (1, np.array([0, -0.005, 0]) * self.inv_ctrl), # Left
+                "l": (1, np.array([0, 0.005, 0]) * self.inv_ctrl),  # Right
+                "o": (1, np.array([0, 0, 0.005])),                  # Up
+                "u": (1, np.array([0, 0, -0.005])),                 # Down
+                # Set the finger (second control part) - using 45
+                "4": 0.05,
+                "5": -0.05,
+                # Set the rotation (second control part) - using 7890
+                "7": [0, 0, 2.0 / 180 * np.pi],
+                "8": [0, 0, -2.0 / 180 * np.pi], 
+                "9": [2.0 / 180 * np.pi, 0, 0],
+                "0": [-2.0 / 180 * np.pi, 0, 0],
+            })
+
         self.pressed_keys = set()
         self.w2c = w2c
         self.intrinsic = intrinsic
@@ -1429,7 +1453,7 @@ class InvPhyTrainerWarp:
             # Get initial positions
             initial_x = wp.to_torch(self.simulator.wp_states[0].wp_x, requires_grad=False).clone()
             object_indices = fps_rad_tensor(initial_x[:self.num_all_points], gnn_config['dataset']['fps_radius'])
-            robot_indices = fps_rad_tensor(self.robot_controller.dynamic_points, gnn_config['dataset']['fps_radius']) 
+            robot_indices = fps_rad_tensor(self.robot_controller.get_flattened_dynamic_points(), gnn_config['dataset']['fps_radius']) 
 
             n_history = gnn_config['train']['n_history']
             
@@ -1439,7 +1463,7 @@ class InvPhyTrainerWarp:
             total_particles = n_object_particles + n_robot_particles
             
             # Create initial state by concatenating object and robot positions
-            initial_positions = torch.cat([initial_x[object_indices], self.robot_controller.dynamic_points[robot_indices]], dim=0)
+            initial_positions = torch.cat([initial_x[object_indices], self.robot_controller.get_flattened_dynamic_points()[robot_indices]], dim=0)
             
             initial_states = initial_positions.unsqueeze(0) # [1, particles, 3]
 
@@ -1748,7 +1772,7 @@ class InvPhyTrainerWarp:
             if "6" in self.pressed_keys:
                 self.pressed_keys.remove("6")  # Remove to prevent multiple saves
                 if self.snapshot_cooldown <= 0:
-                    logger.info(f"Saved snapshot to {save_object_and_robot(x.detach().cpu(), self.robot_controller.dynamic_points.detach().cpu())}")
+                    logger.info(f"Saved snapshot to {save_object_and_robot(x.detach().cpu(), self.robot_controller.get_flattened_dynamic_points().detach().cpu())}")
                     self.snapshot_cooldown = 10  # Set 10-frame cooldown
             
             # Decrement cooldown counter
@@ -1769,7 +1793,7 @@ class InvPhyTrainerWarp:
             # GNN prediction logic
             if gnn_rollout is not None:
                 # Store current robot positions for delta calculation
-                robot_positions_history.append(self.robot_controller.dynamic_points[robot_indices].clone())
+                robot_positions_history.append(self.robot_controller.get_flattened_dynamic_points()[robot_indices].clone())
                 
                 # Keep only the last downsample_rate+1 frames for delta calculation
                 if len(robot_positions_history) > downsample_rate + 1:
@@ -2533,9 +2557,9 @@ class InvPhyTrainerWarp:
             # Update dynamic points (for simulator)
             for mesh in self.dynamic_meshes:
                 end_idx = start_idx + len(mesh.vertices)
-                mesh.vertices = o3d.utility.Vector3dVector(self.robot_controller.dynamic_points[start_idx:end_idx].cpu().numpy())
+                mesh.vertices = o3d.utility.Vector3dVector(self.robot_controller.get_flattened_dynamic_points()[start_idx:end_idx].cpu().numpy())
                 start_idx = end_idx
-            assert end_idx == self.robot_controller.dynamic_points.shape[0], "Dynamic points shape mismatch"
+            assert end_idx == self.robot_controller.get_flattened_dynamic_points().shape[0], "Dynamic points shape mismatch"
 
 
 def get_simple_shadow(
