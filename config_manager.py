@@ -148,7 +148,16 @@ class PhysTwinConfig:
         )
         
         # Create robot controller with robot loader and specified device
-        return RobotController(robot_loader, torch.zeros(n_ctrl_parts, dtype=torch.float32, device=device), n_ctrl_parts, device, cfg.num_substeps, cfg.dt)
+        controller = RobotController(robot_loader, torch.zeros(n_ctrl_parts, dtype=torch.float32, device=device), n_ctrl_parts, device, cfg.num_substeps, cfg.dt)
+
+        # Move additional control parts apart
+        target_change = torch.zeros((n_ctrl_parts, 3), dtype=torch.float32, device=device)
+        space = torch.tensor([0.1, 0.0, 0.0], dtype=torch.float32, device=device)
+        for i in range(n_ctrl_parts - 1):
+            target_change[i] = space
+            controller.quick_robot_movement(target_change)
+
+        return controller
     
     def get_paths(self) -> Dict[str, Path]:
         """Get all relevant paths for the case"""
