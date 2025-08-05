@@ -1790,7 +1790,7 @@ class InvPhyTrainerWarp:
                     with torch.no_grad():
                         gnn_x = gnn_rollout.forward(next_delta).squeeze(0)
                         
-                    logger.info(f"GNN prediction updated at frame {frame_count}")
+                    # logger.info(f"GNN prediction updated at frame {frame_count}")
                 
             # Update the simulator with the gripper changes
             self.simulator.set_mesh_interactive(
