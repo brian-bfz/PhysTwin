@@ -1492,7 +1492,7 @@ class InvPhyTrainerWarp:
                     initial_deltas, 
                     initial_attrs, 
                     particle_nums,
-                    topological_edges=topological_edges,
+                    topo_edges=topological_edges,
                     first_states=initial_states[-1:]
                 )
             else:
