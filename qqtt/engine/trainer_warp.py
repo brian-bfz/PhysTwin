@@ -1447,8 +1447,9 @@ class InvPhyTrainerWarp:
             initial_deltas = torch.zeros(1, n_history-1, total_particles, 3, device=cfg.device)
             
             # Initialize attributes: 0 for object, 1 for robot [1, particles]
-            initial_attrs = torch.zeros(1, total_particles, device=cfg.device)
-            initial_attrs[:, n_object_particles:] = 1.0  # Robot particles
+            initial_attrs = torch.zeros(1, total_particles, 2, device=cfg.device)
+            initial_attrs[:, n_object_particles:, 0] = 1.0  # Robot particles
+            initial_attrs[:, n_object_particles:, 1] = 0.0 # 0=push, 1=lift for robot, 0 for object
             
             # Particle numbers [1]
             particle_nums = torch.tensor([total_particles], device=cfg.device)
