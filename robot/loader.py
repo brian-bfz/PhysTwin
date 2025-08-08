@@ -201,3 +201,12 @@ class RobotLoader:
             
         return np.concatenate(vertices_list, axis=0)
     
+    def get_real_vertices(self, qpos):
+        poses = self.compute_mesh_poses(qpos, link_names=self.finger_link_names)
+        vertices_list = []
+        for i, origin_vertices in enumerate(self.finger_vertices):
+            vertices = np.copy(origin_vertices)
+            vertices = vertices @ poses[i][:3, :3].T + poses[i][:3, 3]
+            vertices_list.append(vertices)
+        return np.concatenate(vertices_list, axis=0)
+    
