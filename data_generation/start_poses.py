@@ -7,6 +7,7 @@ import os
 import h5py
 import pickle
 from ..paths import GENERATED_DATA_DIR
+from shared.data_gen import save_last_frames
 
 def create_push_action(grid_point, wait_frames):
     """
@@ -114,47 +115,6 @@ def init_phystwin(case_name):
     # print(object_vertices.shape)
 
     return trainer, config, object_vertices
-
-def save_last_frames(full_data_path, poses_data_path, target_points, finger_pos):
-    """
-    Save the last frame of each trajectory to a poses file.
-    
-    Args:
-        full_data_path: str - Path to full trajectory data file
-        poses_data_path: str - Path to save poses file
-        target_points: list - List of starting points for the robot
-    """
-    last_frames_object = []
-    last_frames_robot = []
-    
-    # Read all episodes from full data file
-    with h5py.File(full_data_path, 'r') as f:
-        episode_keys = [key for key in f.keys() if key.startswith('episode_')]
-        
-        for episode_key in episode_keys:
-            episode_group = f[episode_key]
-            object_data = episode_group['object'][:]
-            robot_data = episode_group['robot'][:]
-            
-            # Get the last frame
-            last_frame_object = object_data[-1]  # [n_obj, 3]
-            last_frame_robot = robot_data[-1]    # [n_robot, 3]
-            
-            last_frames_object.append(last_frame_object)
-            last_frames_robot.append(last_frame_robot)
-    
-    last_frames_object = np.stack(last_frames_object, axis=0)
-    last_frames_robot = np.stack(last_frames_robot, axis=0)
-    target_points = torch.stack(target_points, dim=0).cpu().numpy()
-    finger_pos = np.stack(finger_pos, axis=0)
-    # print("Shape of object, robot, and target:", last_frames_object.shape, last_frames_robot.shape, target_points.shape)
-
-    # Save poses file with last frames
-    with h5py.File(poses_data_path, 'w') as f:
-        f.create_dataset('object', data=last_frames_object)
-        f.create_dataset('robot', data=last_frames_robot)
-        f.create_dataset('target', data=target_points)
-        f.create_dataset('finger', data=finger_pos)
 
 def generate_push_poses(config):
     """
