@@ -18,7 +18,7 @@ from shared.reward import RewardFn
 
 
 class PhysTwinRolloutFn:
-    def __init__(self, trainer, robot_mask, device):
+    def __init__(self, trainer : InvPhyTrainerWarp, robot_mask, device):
         """
         Initialize the PhysTwin model rollout function.
         
@@ -55,7 +55,7 @@ class PhysTwinRolloutFn:
         state_seqs = torch.zeros(n_sample, n_look_ahead, state_cur.shape[1], device=self.device)
         
         for i in range(n_sample):
-            predicted_states = self.trainer.rollout_act_seq(
+            predicted_states = self.trainer.generate_traj_from_act_seq(
                 initial_object_state,
                 initial_robot_state, 
                 action_seqs[i]  # [n_look_ahead, 2]

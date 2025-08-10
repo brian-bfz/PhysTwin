@@ -1001,24 +1001,25 @@ class InvPhyTrainerWarp:
 
         return result
 
-    def rollout_act_seq(self, initial_object_state, initial_robot_state, action_seq, init_finger=0.0):
+    def generate_traj_from_act_seq(self, initial_object_state, initial_robot_state, act_seq, init_finger=0.0):
         """
-        Run PhysTwin simulation for single action sequence. Main data generation function.
+        Generate a point cloud trajectory from a sequence of robot translations.
         
         Args:
             initial_object_state: [n_obj, 3]
             initial_robot_state: [n_bot, 3] 
-            action_seq: [n_look_ahead, 2 or 3] - robot translation sequence
-            
+            act_seq: [n_look_ahead, 2 or 3] - robot translation sequence
+            init_finger: float - initial gripper opening
+
         Returns:
-            predicted_states: [n_look_ahead, n_particles, 3] - combined object + robot states
+            predicted_states: [n_look_ahead, n_particles, 3] - object + robot states
         """
         # Set z velocity to 0
-        n_look_ahead, action_dim = action_seq.shape
+        n_look_ahead, action_dim = act_seq.shape
         if action_dim == 2:
-            action_seq = torch.cat([action_seq, torch.zeros(action_seq.shape[0], 1, device=cfg.device)], dim=1)
+            act_seq = torch.cat([act_seq, torch.zeros(act_seq.shape[0], 1, device=cfg.device)], dim=1)
         n_particles = initial_object_state.shape[0] + initial_robot_state.shape[0]
-        # print(action_seq)
+        # print(act_seq)
 
         # Reset robot to initial position (reconstruct from initial_robot_state)
         self.robot_controller.set_to_match_vertices(initial_robot_state, init_finger)
@@ -1037,7 +1038,7 @@ class InvPhyTrainerWarp:
         
         for i in range(n_look_ahead):
             # Apply robot translation using controller
-            robot_translation = action_seq[i]
+            robot_translation = act_seq[i]
             
             # Update robot movement using the controller
             movement_result = self.robot_controller.fine_robot_movement(
@@ -1078,14 +1079,34 @@ class InvPhyTrainerWarp:
             
         return predicted_states  # [n_look_ahead, n_particles, 3]
     
-    def generate_data(self, model_path, action_function, gs_path, n_ctrl_parts=1):
+    def generate_traj_from_act_func(self, model_path, act_func, gs_path=None, n_ctrl_parts=1):
         """
-        Originally intended to be a general function for generating data with PhysTwin, but now only used by start_poses.py
+        Generate a point cloud trajectory from an action function
+
+        Args:
+            model_path: str - path to the model
+            act_func: function - action function
+                - Args:
+                    - init_vertices: [n_particles, 3] - initial object vertices
+                    - robot_controller: RobotController - robot controller
+                    - n_ctrl_parts: int - number of robots. 
+                - Returns:
+                    - initial_translation: [n_ctrl_parts, 3] - translation that sends the robot to its initial position
+                    - target_changes: [n_frames, n_ctrl_parts, 3] - robot translations sequence
+                    - initial_finger: float - initial gripper opening
+            gs_path: str - path to the gaussian model. Not used if include_gaussian is False.
+            n_ctrl_parts: int - number of robots. NotImplemented for > 1. 
+
+        Returns:
+            object_frames: list of tensors of shape [n_particles, 3] - object point cloud
+            robot_frames: list of tensors of shape [n_particles, 3] - robot point cloud
+            gaussians_frames: list of dictionaries - 3D gaussian data.
+            final_finger: float - final gripper opening
         """
 
         # Initialize control parts
         self.n_ctrl_parts = n_ctrl_parts
-        initial_translation, target_changes, initial_finger, finger_changes = action_function(
+        initial_translation, target_changes, initial_finger, finger_changes = act_func(
             self.init_vertices, self.robot_controller, self.n_ctrl_parts
         )
 

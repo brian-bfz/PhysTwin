@@ -18,7 +18,7 @@ def create_push_action(grid_point, wait_frames):
         wait_frames: int - number of frames to wait stationary
         
     Returns:
-        function: Action function compatible with InvPhyTrainerWarp.generate_data
+        function: Action function compatible with InvPhyTrainerWarp.generate_traj_from_act_func
     """
     def push_action(init_vertices, robot_controller, n_ctrl_parts):
         # Robot starts closed (finger = 0.0)
@@ -45,7 +45,7 @@ def create_lift_action(grid_point, wait_frames):
         wait_frames: int - number of frames to wait stationary after grasping
         
     Returns:
-        function: Action function compatible with InvPhyTrainerWarp.generate_data
+        function: Action function compatible with InvPhyTrainerWarp.generate_traj_from_act_func
     """
     grid_point[2] += -0.005 # offset so robot doens't start too low. 
     def lift_action(init_vertices, robot_controller, n_ctrl_parts):
@@ -117,10 +117,11 @@ def init_phystwin(case_name):
 def generate_push_poses(config):
     """
     Generate a grid that spans the entire object + margin with cell_size x cell_size cells
-    For each grid point, determine if it's at most max_dist away from an object point, and at least min_dist away from every object point
-    If it is, generate a trajectory with InvPhyTrainerWarp.generate_data where the robot starts closed, centered at the point, and stays stationary for {wait} frames
-    Tell generate_data to save to PhysTwin/generated_data/{case_name}/full_push_poses.h5
-    Create a file PhysTwin/generated_data/{case_name}/push_poses.h5 that contains the last frame of each trajectory
+    For each grid point, determine if it's [min_dist, max_dist] away from the closest object point
+    If it is, generate a trajectory where the robot starts closed and centered at the point
+    Wait for the object to stablize
+    Save full trajectory to PhysTwin/generated_data/{case_name}/full_push_poses.h5 (not used for training)
+    Save last frame to PhysTwin/generated_data/{case_name}/push_poses.h5 as an initial state for generating training data
     """
     case_name = config["case_name"]
     margin = config["margin"]
@@ -158,11 +159,10 @@ def generate_push_poses(config):
                 grid_point = torch.tensor([x, y, z], dtype=torch.float32, device=object_vertices.device)
                 
                 # Check distance constraints
-                distances = torch.norm(object_vertices - grid_point, dim=1)
+                distances = torch.norm(object_vertices[:, :2] - grid_point[:2], dim=1) # calculate distance in x-y plane to avoid initializing inside the object
                 min_distance = torch.min(distances).item()
                     
-                # Point is valid if it's close enough to at least one object point
-                # and far enough from all object points
+                # Point is valid if it's [min_dist, max_dist] away from the closest object point
                 if min_distance <= max_dist and min_distance >= min_dist:
                     valid_points.append(grid_point)
 
@@ -186,7 +186,7 @@ def generate_push_poses(config):
         print(f"Processing grid point {i+1}/{len(valid_points)}: {grid_point.cpu().numpy()}")
                 
         # Generate trajectory
-        object_data, robot_data, gaussians_data, finger_pos = trainer.generate_data(
+        object_data, robot_data, gaussians_data, finger_pos = trainer.generate_traj_from_act_func(
             config.get_best_model_path(),
             create_push_action(grid_point, wait),
             config.get_gaussian_path(),
@@ -203,9 +203,10 @@ def generate_lift_poses(config):
     """
     Generate a grid that spans the entire object with cell_size x cell_size cells
     For each grid point, find the object point that is directly below it
-    If such a point exists, generate a trajectory with InvPhyTrainerWarp.generate_data where the robot starts open, 0.1 units above the point, lowers itself to the point, closes, and stays stationary for {wait} frames
-    Tell generate_data to save to PhysTwin/generated_data/{case_name}/full_lift_poses.h5
-    Create a file PhysTwin/generated_data/{case_name}/lift_poses.h5 that contains the last frame of each trajectory
+    If such a point exists, generate a trajectory where the robot starts open, 0.1 units above the point, lowers itself to the point, and closes
+    Wait for the gripper to close and the object to stablize
+    Save full trajectory to PhysTwin/generated_data/{case_name}/full_lift_poses.h5 (not used for training)
+    Save last frame to PhysTwin/generated_data/{case_name}/lift_poses.h5 as an initial state for generating training data
     """
     case_name = config["case_name"]
     cell_size = config["cell_size"]
@@ -269,7 +270,7 @@ def generate_lift_poses(config):
         print(f"Processing lift point {i+1}/{len(valid_points)}: {grid_point.cpu().numpy()}")
         
         # Generate trajectory
-        object_data, robot_data, gaussians_data, finger_pos = trainer.generate_data(
+        object_data, robot_data, gaussians_data, finger_pos = trainer.generate_traj_from_act_func(
             config.get_best_model_path(),
             create_lift_action(grid_point, wait),
             config.get_gaussian_path(),

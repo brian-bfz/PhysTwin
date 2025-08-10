@@ -53,10 +53,10 @@ class PhysTwin:
         
     def compute_deformation(self, initial_object_state, initial_robot_state, action_seq, init_finger=0.0):
         """
-        Compute actual object deformation using PhysTwin simulation.
-        
-        This method interpolates the GNN action sequence to match PhysTwin's native frame rate,
+        Interpolates the GNN action sequence to match PhysTwin's native frame rate,
         runs the simulation at full temporal resolution, then downsamples the results back to GNN frame rate.
+        Appends the initial frame to the trajectory.
+        You can use generate_traj_from_act_seq directly if downsampling and initial frame aren't needed.
         
         Args:
             action_seq: [n_look_ahead, action_dim] - action sequence at GNN frame rate
@@ -66,7 +66,7 @@ class PhysTwin:
             
         Returns:
             actual_trajectory: [n_look_ahead*downsample_rate+1, n_particles, 3] - actual deformation trajectory at GNN frame rate
-            downsampled_indices: [n_look_ahead] - indices of the downsampled frames
+            downsampled_indices: [n_look_ahead+1] - indices of the downsampled frames
         """
         
         # Interpolate action sequence to match PhysTwin's native frame rate
@@ -76,9 +76,9 @@ class PhysTwin:
         else:
             interpolated_actions = action_seq
             
-        # Get actual deformation from PhysTwin using rollout_act_seq
+        # Get actual deformation from PhysTwin 
         # print("Computing actual deformation with PhysTwin...")
-        predicted_states = self.trainer.rollout_act_seq(
+        predicted_states = self.trainer.generate_traj_from_act_seq(
             initial_object_state, initial_robot_state, interpolated_actions, init_finger
         )  # [n_look_ahead * downsample_rate, n_particles, 3]
             
