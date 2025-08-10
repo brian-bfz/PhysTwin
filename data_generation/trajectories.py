@@ -1,6 +1,5 @@
-from PhysTwin.qqtt import InvPhyTrainerWarp
-from PhysTwin.config_manager import PhysTwinConfig
-from shared.reward import RewardFn
+from ..qqtt import InvPhyTrainerWarp
+from ..qqtt.utils import PhysTwinConfig
 import torch
 import torch.multiprocessing as mp
 import h5py

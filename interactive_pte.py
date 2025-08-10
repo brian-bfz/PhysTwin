@@ -1,6 +1,5 @@
 from .qqtt import InvPhyTrainerWarp
-from .qqtt.utils import logger, cfg
-from .config_manager import PhysTwinConfig, create_common_parser
+from .qqtt.utils import logger, cfg, PhysTwinConfig, create_common_parser
 import random
 import numpy as np
 import torch

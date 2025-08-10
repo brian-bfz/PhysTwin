@@ -10,9 +10,9 @@ import numpy as np
 from pathlib import Path
 from typing import Dict
 
-from .qqtt.utils import logger, cfg
-from .paths import *
-from .robot import RobotLoader, RobotController
+from . import logger, cfg
+from ...paths import *
+from ...robot import RobotLoader, RobotController
 
 
 class PhysTwinConfig:

@@ -8,8 +8,7 @@ import pickle
 import json
 
 from .qqtt import InvPhyTrainerWarp
-from .qqtt.utils import logger, cfg
-from .config_manager import PhysTwinConfig, create_common_parser
+from .qqtt.utils import logger, cfg, PhysTwinConfig, create_common_parser
 from .paths import get_case_paths, URDF_XARM7
 from shared.planner import PlannerWrapper
 from shared.utils import load_mpc_data, setup_task_directory

@@ -4,8 +4,7 @@ import h5py
 import numpy as np
 import open3d as o3d
 
-from .qqtt.utils import logger, cfg
-from .config_manager import PhysTwinConfig, create_common_parser
+from .qqtt.utils import logger, cfg, PhysTwinConfig, create_common_parser
 from .paths import *
 from shared.utils import parse_episodes
 

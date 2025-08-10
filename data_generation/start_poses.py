@@ -1,5 +1,5 @@
 from ..qqtt import InvPhyTrainerWarp
-from ..config_manager import PhysTwinConfig
+from ..qqtt.utils import PhysTwinConfig
 import argparse
 import torch
 import numpy as np
@@ -7,7 +7,7 @@ import os
 import h5py
 import pickle
 from ..paths import GENERATED_DATA_DIR
-from shared.data_gen import save_last_frames
+from .save_data import save_episode_data, save_last_frames
 
 def create_push_action(grid_point, wait_frames):
     """
@@ -192,7 +192,6 @@ def generate_push_poses(config):
             config.get_gaussian_path(),
             n_ctrl_parts=1
         )
-        from shared.data_gen import save_episode_data
         save_episode_data(full_data_path, i, object_data, robot_data, grid_point, finger_pos)
 
     # Save last frames to poses file
@@ -276,7 +275,6 @@ def generate_lift_poses(config):
             config.get_gaussian_path(),
             n_ctrl_parts=1,
         )
-        from shared.data_gen import save_episode_data
         save_episode_data(full_data_path, i, object_data, robot_data, grid_point, finger_pos)
 
     # Save last frames to poses file
