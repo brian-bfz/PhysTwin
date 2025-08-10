@@ -1,6 +1,8 @@
 # PhysTwin: Physics-Informed Reconstruction and Simulation of Deformable Objects from Videos
 
 <span class="author-block">
+<a target="_blank" href="https://github.com/brian-bfz">Bufan Zhao</a><sup>1,3</sup>,
+</span>
 <a target="_blank" href="https://jianghanxiao.github.io/">Hanxiao Jiang</a><sup>1,2</sup>,
 </span>
 <span class="author-block">
@@ -19,13 +21,14 @@
 <a target="_blank" href="https://yunzhuli.github.io/">Yunzhu Li</a><sup>1</sup>
 </span>
 
-<span class="author-block"><sup>1</sup>Columbia University,</span>
+<span class="author-block"><sup>1</sup>Columbia University</span>
 <span class="author-block"><sup>2</sup>University of Illinois Urbana-Champaign</span>
+<span class="author-block"><sup>3</sup>California Institute of Technology</span>
 
 ### [Website](https://jianghanxiao.github.io/phystwin-web/) | [Paper](https://jianghanxiao.github.io/phystwin-web/phystwin.pdf) | [Arxiv](https://arxiv.org/abs/2503.17973)
 
 ### Overview
-This repository contains the official implementation of the **PhysTwin** framework.
+This is my fork of Hanxiao's PhysTwin. It's a submodule in NeuraTwin. 
 
 ![TEASER](./assets/teaser.png)
 

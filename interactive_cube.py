@@ -155,6 +155,7 @@ class RobotPcSampler:
 
 
 if __name__ == "__main__":
+    raise NotImplementedError("This script is deprecated. Use interactive_pte.py instead.")
     parser = ArgumentParser()
     parser.add_argument(
         "--base_path",

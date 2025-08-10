@@ -1,3 +1,4 @@
+# Warning: this script hasn't been updated to reflect recent changes. 
 import torch
 import numpy as np
 import os
