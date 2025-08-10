@@ -328,7 +328,7 @@ if __name__ == "__main__":
                 ) for i in range(world_size)
             ])
     else:
-        output_file = generate_data((config, args.output_file, args.mode, None))
+        output_file = generate_data((config, args.n_episodes, args.output_file, args.mode, None))
 
     if world_size > 1:
         from ..scripts.merge_dataset import merge_datasets

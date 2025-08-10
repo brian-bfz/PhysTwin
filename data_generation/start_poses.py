@@ -139,29 +139,35 @@ def generate_push_poses(config):
     # Generate grid points
     print("Generating grid points...")
     # Calculate bounding box of object with margin
+    margin = torch.tensor([margin, margin, -cell_size], device = object_vertices.device)
     min_coords = torch.min(object_vertices, dim=0)[0] - margin
     max_coords = torch.max(object_vertices, dim=0)[0] + margin
     
     # Generate grid
     x_range = torch.arange(min_coords[0], max_coords[0] + cell_size, cell_size)
     y_range = torch.arange(min_coords[1], max_coords[1] + cell_size, cell_size)
-    z = (min_coords[2] + max_coords[2]) / 2
+    if min_coords[2] < max_coords[2]:
+        z_range = torch.arange(min_coords[2], max_coords[2] + cell_size, cell_size)
+    else:
+        # z_range is just the midpoint
+        z_range = torch.tensor([(min_coords[2] + max_coords[2]) / 2], device=object_vertices.device)
     
     valid_points = []
     finger_pos = []
     
     for x in x_range:
         for y in y_range:
-            grid_point = torch.tensor([x, y, z], dtype=torch.float32, device=object_vertices.device)
+            for z in z_range:
+                grid_point = torch.tensor([x, y, z], dtype=torch.float32, device=object_vertices.device)
                 
-            # Check distance constraints
-            distances = torch.norm(object_vertices - grid_point, dim=1)
-            min_distance = torch.min(distances).item()
-                
-            # Point is valid if it's close enough to at least one object point
-            # and far enough from all object points
-            if min_distance <= max_dist and min_distance >= min_dist:
-                valid_points.append(grid_point)
+                # Check distance constraints
+                distances = torch.norm(object_vertices - grid_point, dim=1)
+                min_distance = torch.min(distances).item()
+                    
+                # Point is valid if it's close enough to at least one object point
+                # and far enough from all object points
+                if min_distance <= max_dist and min_distance >= min_dist:
+                    valid_points.append(grid_point)
 
     print(f"Found {len(valid_points)} valid grid points")
     
