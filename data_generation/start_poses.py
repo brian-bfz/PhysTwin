@@ -103,8 +103,6 @@ def init_phystwin(case_name):
         pure_inference_mode=True,
         static_meshes=[],
         robot_controller=config.get_robot_controller("default", n_ctrl_parts=1, device='cuda'),
-        include_gaussian=False,
-        device='cuda',
     )
 
     # Get initial vertices
@@ -188,7 +186,7 @@ def generate_push_poses(config):
         print(f"Processing grid point {i+1}/{len(valid_points)}: {grid_point.cpu().numpy()}")
                 
         # Generate trajectory
-        object_data, robot_data, _, finger_pos = trainer.generate_data(
+        object_data, robot_data, gaussians_data, finger_pos = trainer.generate_data(
             config.get_best_model_path(),
             create_push_action(grid_point, wait),
             config.get_gaussian_path(),
@@ -247,9 +245,9 @@ def generate_lift_poses(config):
                 # Use the highest point (highest z coordinate) among close points
                 close_points = object_vertices[close_indices]
                 highest_z_idx = torch.argmax(close_points[:, 2])
-                target_point = close_points[highest_z_idx]
+                grid_point = close_points[highest_z_idx]
                 
-                valid_points.append(target_point)
+                valid_points.append(grid_point)
     
     print(f"Found {len(valid_points)} valid lift points")
     
@@ -267,22 +265,21 @@ def generate_lift_poses(config):
         os.remove(poses_data_path)
     
     # Generate trajectories for each valid point
-    for i, target_point in enumerate(valid_points):
-        print(f"Processing lift point {i+1}/{len(valid_points)}: {target_point.cpu().numpy()}")
+    for i, grid_point in enumerate(valid_points):
+        print(f"Processing lift point {i+1}/{len(valid_points)}: {grid_point.cpu().numpy()}")
         
         # Generate trajectory
-        trainer.generate_data(
+        object_data, robot_data, gaussians_data, finger_pos = trainer.generate_data(
             config.get_best_model_path(),
-            create_lift_action(target_point, wait),
+            create_lift_action(grid_point, wait),
             config.get_gaussian_path(),
             n_ctrl_parts=1,
-            data_file_path=full_data_path,
-            episode_id=i
         )
-        finger_pos.append(trainer.robot_controller.get_current_finger())
-    
+        from shared.data_gen import save_episode_data
+        save_episode_data(full_data_path, i, object_data, robot_data, grid_point, finger_pos)
+
     # Save last frames to poses file
-    save_last_frames(full_data_path, poses_data_path, valid_points, finger_pos)
+    save_last_frames(full_data_path, poses_data_path)
     return poses_data_path
     
 def visualize_poses(poses_data_path):

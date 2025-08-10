@@ -48,21 +48,22 @@ class InvPhyTrainerWarp:
         mask_path=None,
         velocity_path=None,
         pure_inference_mode=False,
-        device="cuda:0",
+        device=None,
         static_meshes=None,
         robot_controller=None,
         include_gaussian=False,
     ):
         cfg.data_path = data_path
         cfg.base_dir = base_dir
-        cfg.device = device
+        if device is not None:  
+            cfg.device = device # already set in PhysTwinConfig
         cfg.run_name = base_dir.split("/")[-1]
         cfg.train_frame = train_frame
         
         # Set warp device for multiprocessing compatibility
         # Extract device index for warp (e.g., "cuda:0" -> 0)
-        if ":" in device:
-            device_idx = int(device.split(":")[-1])
+        if ":" in cfg.device:
+            device_idx = int(cfg.device.split(":")[-1])
         else:
             device_idx = 0
         wp.set_device(f"cuda:{device_idx}")
@@ -1105,7 +1106,7 @@ class InvPhyTrainerWarp:
         
         # set robot position and movement parameters
         n_frames = target_changes.shape[0]
-        rot_changes = np.zeros((n_frames, 3), dtype=np.float32)
+        rot_changes = torch.zeros((n_frames, 3), dtype=torch.float32, device=cfg.device)
         
         logger.info("Starting data generation")
 
@@ -1198,10 +1199,10 @@ class InvPhyTrainerWarp:
             # =====================robot stuff=====================
             # Update robot movement using the controller
             movement_result = self.robot_controller.fine_robot_movement(
-                target_change=torch.tensor(target_changes[i], dtype=torch.float32, device=self.robot_controller.device),
+                target_change=target_changes[i],
                 collision_forces=collision_forces,
                 finger_change=finger_changes[i],
-                rot_change=torch.tensor(rot_changes[i], dtype=torch.float32, device=self.robot_controller.device)
+                rot_change=rot_changes[i]
             )
             
             # Update the simulator with the gripper changes
@@ -1739,8 +1740,10 @@ class InvPhyTrainerWarp:
 
             # Update the changes
             target_change = self.get_target_change()
+            target_change = torch.tensor(target_change, dtype=torch.float32, device=cfg.device)
             finger_change = self.get_finger_change()
             rot_change = self.get_rot_change()
+            rot_change = torch.tensor(rot_change, dtype=torch.float32, device=cfg.device)
 
             # Handle "6" key press for saving target snapshot with cooldown
             if "6" in self.pressed_keys:
@@ -1755,10 +1758,10 @@ class InvPhyTrainerWarp:
 
             # Update robot movement using the controller
             movement_result = self.robot_controller.fine_robot_movement(
-                target_change=torch.tensor(target_change, dtype=torch.float32, device=self.robot_controller.device),
+                target_change=target_change,
                 collision_forces=collision_forces,
                 finger_change=finger_change,
-                rot_change=torch.tensor(rot_change, dtype=torch.float32, device=self.robot_controller.device)
+                rot_change=rot_change
             )
             
             # Update protected copies after robot movement

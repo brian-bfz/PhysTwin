@@ -4,7 +4,6 @@ Refactored from RobotMovementController to be the single source of robot state t
 """
 import torch
 import numpy as np
-import open3d as o3d
 
 
 def axis_angle_to_matrix(axis_angle: torch.Tensor) -> torch.Tensor:

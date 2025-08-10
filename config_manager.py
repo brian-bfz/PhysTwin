@@ -8,7 +8,7 @@ import pickle
 import json
 import numpy as np
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict
 
 from .qqtt.utils import logger, cfg
 from .paths import *
@@ -18,8 +18,7 @@ from .robot import RobotLoader, RobotController
 class PhysTwinConfig:
     """Centralized configuration management for PhysTwin system"""
     
-    def __init__(self, case_name: str, base_path: Optional[str] = None, 
-                 bg_img_path: Optional[str] = None, gaussian_path: Optional[str] = None, inference: Optional[bool] = True):
+    def __init__(self, case_name: str, base_path: str = None, bg_img_path: str = None, gaussian_path: str = None, inference: bool = True, device: str = "cuda"):
         """
         Initialize configuration for a specific case
         
@@ -36,18 +35,19 @@ class PhysTwinConfig:
         
         # Initialize paths and configuration
         self.case_paths = get_case_paths(case_name)
-        self._setup_config()
+        self._setup_config(device)
         self._load_optimal_params()
         self._load_calibration_data()
         if inference: 
             self.setup_logging("inference_log")
 
-    def _setup_config(self) -> None:
+    def _setup_config(self, device) -> None:
         """Load case-specific configuration (cloth vs real)"""
         if "cloth" in self.case_name or "package" in self.case_name:
             cfg.load_from_yaml(str(CONFIG_CLOTH))
         else:
             cfg.load_from_yaml(str(CONFIG_REAL))
+        cfg.device = device
         
         # logger.info(f"Loaded configuration for case: {self.case_name}")
         # logger.info(f"Data type: {cfg.data_type}")
@@ -114,7 +114,7 @@ class PhysTwinConfig:
         """Get temporary base directory for experiments"""
         return str(TEMP_EXPERIMENTS_DIR / self.case_name)
     
-    def get_robot_controller(self, robot_type: str = "default", n_ctrl_parts: int = 1, device: str = 'cuda'):
+    def get_robot_controller(self, robot_type: str = "default", n_ctrl_parts: int = 1, device: str = None):
         """
         Create a robot controller with the correct initial pose.
         
@@ -145,7 +145,7 @@ class PhysTwinConfig:
         )
         
         # Create robot controller with robot loader and specified device
-        return RobotController(robot_loader, 0.0, n_ctrl_parts, device)
+        return RobotController(robot_loader, 0.0, n_ctrl_parts, device or cfg.device)
     
     def get_paths(self) -> Dict[str, Path]:
         """Get all relevant paths for the case"""

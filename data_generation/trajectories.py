@@ -31,7 +31,7 @@ class PhysTwin:
             self.device = device
                 
         # Create PhysTwin configuration
-        phystwin_config = PhysTwinConfig(case_name=self.case_name)
+        phystwin_config = PhysTwinConfig(case_name=self.case_name, device=self.device)
         
         # Keep PhysTwin at original frame rate - no adjustments needed
         # print(f"PhysTwin config: substeps={cfg.num_substeps}, FPS={cfg.FPS}")
@@ -42,8 +42,7 @@ class PhysTwin:
             base_dir=str(phystwin_config.case_paths['base_dir']),
             pure_inference_mode=True,
             static_meshes=[],
-            robot_controller=phystwin_config.get_robot_controller(robot_type="default", device=self.device),
-            device=str(self.device),
+            robot_controller=phystwin_config.get_robot_controller(robot_type="default"),
         )
         
         # Initialize simulator with trained model
