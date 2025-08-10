@@ -195,10 +195,10 @@ def generate_push_poses(config):
             n_ctrl_parts=1
         )
         from shared.data_gen import save_episode_data
-        save_episode_data(full_data_path, i, object_data, robot_data, finger_pos)
+        save_episode_data(full_data_path, i, object_data, robot_data, grid_point, finger_pos)
 
     # Save last frames to poses file
-    save_last_frames(full_data_path, poses_data_path, valid_points)
+    save_last_frames(full_data_path, poses_data_path)
     return poses_data_path
 
 def generate_lift_poses(config):

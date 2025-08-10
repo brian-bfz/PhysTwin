@@ -1002,7 +1002,7 @@ class InvPhyTrainerWarp:
 
     def rollout_act_seq(self, initial_object_state, initial_robot_state, action_seq, init_finger=0.0):
         """
-        Run PhysTwin simulation for single action sequence.
+        Run PhysTwin simulation for single action sequence. Main data generation function.
         
         Args:
             initial_object_state: [n_obj, 3]
@@ -1078,6 +1078,10 @@ class InvPhyTrainerWarp:
         return predicted_states  # [n_look_ahead, n_particles, 3]
     
     def generate_data(self, model_path, action_function, gs_path, n_ctrl_parts=1):
+        """
+        Originally intended to be a general function for generating data with PhysTwin, but now only used by start_poses.py
+        """
+
         # Initialize control parts
         self.n_ctrl_parts = n_ctrl_parts
         initial_translation, target_changes, initial_finger, finger_changes = action_function(
@@ -1090,10 +1094,8 @@ class InvPhyTrainerWarp:
             current_finger=initial_finger,
             rot_change=None
         )
-        # Update protected copies after robot movement
-        self._update_robot_visualization()
 
-        self.initialize_simulator(model_path)
+        self.initialize_simulator(model_path) # is this needed? What if we initialize the simulator in the constructor?
             
         # Reset simulator state
         self.simulator.set_init_state(
@@ -1201,9 +1203,6 @@ class InvPhyTrainerWarp:
                 finger_change=finger_changes[i],
                 rot_change=torch.tensor(rot_changes[i], dtype=torch.float32, device=self.robot_controller.device)
             )
-            
-            # Update protected copies after robot movement
-            self._update_robot_visualization()
             
             # Update the simulator with the gripper changes
             self.simulator.set_mesh_interactive(
