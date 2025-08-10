@@ -1077,7 +1077,7 @@ class InvPhyTrainerWarp:
             
         return predicted_states  # [n_look_ahead, n_particles, 3]
     
-    def generate_data(self, model_path, action_function, gs_path, n_ctrl_parts=1, data_file_path=None, episode_id=0):
+    def generate_data(self, model_path, action_function, gs_path, n_ctrl_parts=1):
         # Initialize control parts
         self.n_ctrl_parts = n_ctrl_parts
         initial_translation, target_changes, initial_finger, finger_changes = action_function(
@@ -1224,9 +1224,7 @@ class InvPhyTrainerWarp:
                     'frame_count': frame_count
                 })
 
-        # Save all collected data to the shared HDF5 file
-        from ..utils.misc import save_episode_data
-        save_episode_data(data_file_path, episode_id, object_frames, robot_frames, self.include_gaussian, gaussians_frames)
+        return object_frames, robot_frames, gaussians_frames, self.robot_controller.get_current_finger()
 
     def interactive_robot(self, model_path, gs_path, n_ctrl_parts=1, inv_ctrl=False, virtual_key_input=False, gnn_model=None, gnn_config=None):
         from pynput import keyboard

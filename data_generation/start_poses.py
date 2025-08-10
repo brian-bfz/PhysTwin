@@ -153,8 +153,7 @@ def generate_push_poses(config):
         z_range = torch.tensor([(min_coords[2] + max_coords[2]) / 2], device=object_vertices.device)
     
     valid_points = []
-    finger_pos = []
-    
+
     for x in x_range:
         for y in y_range:
             for z in z_range:
@@ -189,18 +188,17 @@ def generate_push_poses(config):
         print(f"Processing grid point {i+1}/{len(valid_points)}: {grid_point.cpu().numpy()}")
                 
         # Generate trajectory
-        trainer.generate_data(
+        object_data, robot_data, _, finger_pos = trainer.generate_data(
             config.get_best_model_path(),
             create_push_action(grid_point, wait),
             config.get_gaussian_path(),
-            n_ctrl_parts=1,
-            data_file_path=full_data_path,
-            episode_id=i
+            n_ctrl_parts=1
         )
-        finger_pos.append(trainer.robot_controller.get_current_finger())
+        from shared.data_gen import save_episode_data
+        save_episode_data(full_data_path, i, object_data, robot_data, finger_pos)
 
     # Save last frames to poses file
-    save_last_frames(full_data_path, poses_data_path, valid_points, finger_pos)
+    save_last_frames(full_data_path, poses_data_path, valid_points)
     return poses_data_path
 
 def generate_lift_poses(config):
