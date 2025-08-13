@@ -37,7 +37,7 @@ import matplotlib.pyplot as plt
 
 from GNN.model.rollout import Rollout
 from GNN.utils import visualize_edges, fps_rad_tensor, construct_edges_from_tensor
-from shared.utils import save_object_and_robot
+from shared.utils import save_object_and_robot, get_simple_shadow
 
 class InvPhyTrainerWarp:
     def __init__(
@@ -2559,53 +2559,6 @@ class InvPhyTrainerWarp:
                 start_idx = end_idx
             assert end_idx == self.robot_controller.dynamic_points.shape[0], "Dynamic points shape mismatch"
 
-
-def get_simple_shadow(
-    points,
-    intrinsic,
-    w2c,
-    width,
-    height,
-    image_mask,
-    kernel_size=7,
-    light_point=[0, 0, -3],
-):
-    points = points.cpu().numpy()
-
-    t = -points[:, 2] / light_point[2]
-    points_on_table = points + t[:, None] * light_point
-
-    points_homogeneous = np.hstack(
-        [points_on_table, np.ones((points_on_table.shape[0], 1))]
-    )  # Convert to homogeneous coordinates
-    points_camera = (w2c @ points_homogeneous.T).T
-
-    points_pixels = (intrinsic @ points_camera[:, :3].T).T
-    points_pixels /= points_pixels[:, 2:3]
-    pixel_coords = points_pixels[:, :2]
-
-    valid_mask = (
-        (pixel_coords[:, 0] >= 0)
-        & (pixel_coords[:, 0] < width)
-        & (pixel_coords[:, 1] >= 0)
-        & (pixel_coords[:, 1] < height)
-    )
-
-    valid_pixel_coords = pixel_coords[valid_mask]
-    valid_pixel_coords = valid_pixel_coords.astype(int)
-
-    shadow_image = np.zeros((height, width), dtype=np.uint8)
-    shadow_image[valid_pixel_coords[:, 1], valid_pixel_coords[:, 0]] = 255
-
-    kernel = np.ones((kernel_size, kernel_size), np.uint8)
-    kernel_1 = np.ones((3, 3), np.uint(8))
-    dilated_shadow = cv2.dilate(shadow_image, kernel, iterations=1)
-    dilated_shadow = cv2.dilate(dilated_shadow, kernel_1, iterations=1)
-    final_shadow = cv2.erode(dilated_shadow, kernel, iterations=1)
-
-    final_shadow[image_mask] = 0
-    final_shadow = final_shadow == 255
-    return final_shadow
 
 def calculate_energy(x, spring_Y, springs, rest_lengths, num_object_springs):
     object_springs = springs[:num_object_springs]
