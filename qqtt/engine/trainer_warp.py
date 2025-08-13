@@ -42,23 +42,13 @@ from shared.utils import save_object_and_robot, get_simple_shadow
 class InvPhyTrainerWarp:
     def __init__(
         self,
-        data_path,
-        base_dir,
-        train_frame=None,
         mask_path=None,
         velocity_path=None,
         pure_inference_mode=False,
-        device=None,
         static_meshes=None,
         robot_controller=None,
         include_gaussian=False,
     ):
-        cfg.data_path = data_path
-        cfg.base_dir = base_dir
-        if device is not None:  
-            cfg.device = device # already set in PhysTwinConfig
-        cfg.run_name = base_dir.split("/")[-1]
-        cfg.train_frame = train_frame
         
         # Set warp device for multiprocessing compatibility
         # Extract device index for warp (e.g., "cuda:0" -> 0)

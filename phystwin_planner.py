@@ -98,8 +98,6 @@ class PhysTwinPlanner(PlannerWrapper):
         """Initialize PhysTwin trainer with loaded model."""
         # Create trainer
         trainer = InvPhyTrainerWarp(
-            data_path=self.model_config.get_data_path(),
-            base_dir=str(self.model_config.case_paths['base_dir']),
             pure_inference_mode=True,
             static_meshes=[],
             robot_controller=self.model_config.get_robot_controller("default"),

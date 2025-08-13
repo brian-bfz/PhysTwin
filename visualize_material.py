@@ -25,6 +25,7 @@ seed = 42
 set_all_seeds(seed)
 
 if __name__ == "__main__":
+    raise NotImplementedError("This script has not been updated to use the new cfg interface.")
     cfg.load_from_yaml("configs/real.yaml")
 
     parser = ArgumentParser()

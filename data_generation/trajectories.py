@@ -37,8 +37,6 @@ class PhysTwin:
         # print(f"GNN downsample_rate: {self.downsample_rate}")
         
         self.trainer = InvPhyTrainerWarp(
-            data_path=phystwin_config.get_data_path(),
-            base_dir=str(phystwin_config.case_paths['base_dir']),
             pure_inference_mode=True,
             static_meshes=[],
             robot_controller=phystwin_config.get_robot_controller(robot_type="default"),

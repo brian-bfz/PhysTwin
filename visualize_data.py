@@ -9,108 +9,108 @@ from .paths import *
 from shared.utils import parse_episodes
 
 def video_from_data(f, episode_id, dynamic_meshes, output_dir):
-        logger.info(f"Starting video generation for episode {episode_id}")
+    logger.info(f"Starting video generation for episode {episode_id}")
 
-        vis_cam_idx = 0
-        width, height = cfg.WH
-        intrinsic = cfg.intrinsics[vis_cam_idx]
-        w2c = cfg.w2cs[vis_cam_idx]
+    vis_cam_idx = 0
+    width, height = cfg.WH
+    intrinsic = cfg.intrinsics[vis_cam_idx]
+    w2c = cfg.w2cs[vis_cam_idx]
 
-        finger_vertex_counts = [len(mesh.vertices) for mesh in dynamic_meshes]
+    finger_vertex_counts = [len(mesh.vertices) for mesh in dynamic_meshes]
 
-        vis = o3d.visualization.Visualizer()
-        vis.create_window(visible=False, width=width, height=height)
-        render_option = vis.get_render_option()
-        render_option.point_size = 10.0
+    vis = o3d.visualization.Visualizer()
+    vis.create_window(visible=False, width=width, height=height)
+    render_option = vis.get_render_option()
+    render_option.point_size = 10.0
 
-        for dynamic_mesh in dynamic_meshes:
-            vis.add_geometry(dynamic_mesh)
+    for dynamic_mesh in dynamic_meshes:
+        vis.add_geometry(dynamic_mesh)
 
-        # Load data from shared HDF5 file
-        episode_key = f'episode_{episode_id:06d}'
-            
-        if episode_key not in f:
-            print(f"Episode {episode_id} not found in data file")
-            return
-                
-        episode_group = f[episode_key]
-        object_data = episode_group['object'][:]
-        robot_data = episode_group['robot'][:]
+    # Load data from shared HDF5 file
+    episode_key = f'episode_{episode_id:06d}'
         
-        # Print episode metadata
-        n_frames = episode_group.attrs['n_frames']
-        n_obj_particles = episode_group.attrs['n_obj_particles']
-        n_bot_particles = episode_group.attrs['n_bot_particles']
+    if episode_key not in f:
+        print(f"Episode {episode_id} not found in data file")
+        return
             
-        print(f"Episode {episode_id}: {n_frames} frames")
-        print(f"Object particles: {n_obj_particles}, Robot particles: {n_bot_particles}")
+    episode_group = f[episode_key]
+    object_data = episode_group['object'][:]
+    robot_data = episode_group['robot'][:]
+    
+    # Print episode metadata
+    n_frames = episode_group.attrs['n_frames']
+    n_obj_particles = episode_group.attrs['n_obj_particles']
+    n_bot_particles = episode_group.attrs['n_bot_particles']
+        
+    print(f"Episode {episode_id}: {n_frames} frames")
+    print(f"Object particles: {n_obj_particles}, Robot particles: {n_bot_particles}")
 
-        try:
-            object_type = episode_group.attrs['object_type']
-            motion_type = episode_group.attrs['motion_type']
-            print(f"Object type: {object_type}, Motion type: {motion_type}")
-        except:
-            pass
+    try:
+        object_type = episode_group.attrs['object_type']
+        motion_type = episode_group.attrs['motion_type']
+        print(f"Object type: {object_type}, Motion type: {motion_type}")
+    except:
+        pass
 
 
-        # Initialize with first frame
-        x = object_data[0]
-        object_pcd = o3d.geometry.PointCloud()
+    # Initialize with first frame
+    x = object_data[0]
+    object_pcd = o3d.geometry.PointCloud()
+    object_pcd.points = o3d.utility.Vector3dVector(x)
+    object_pcd.paint_uniform_color([0, 0, 1])
+    vis.add_geometry(object_pcd)
+
+    view_control = vis.get_view_control()
+    camera_params = o3d.camera.PinholeCameraParameters()
+    intrinsic_parameter = o3d.camera.PinholeCameraIntrinsic(
+        width, height, intrinsic
+    )
+    camera_params.intrinsic = intrinsic_parameter
+    camera_params.extrinsic = w2c
+    view_control.convert_from_pinhole_camera_parameters(
+        camera_params, allow_arbitrary=True
+    )
+
+    # Initialize video writer
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    output_path = os.path.join(output_dir, f"{episode_id:06d}.mp4")
+    fourcc = cv2.VideoWriter_fourcc(*'avc1')
+    out = cv2.VideoWriter(output_path, fourcc, cfg.FPS, (width, height))
+
+    n_frames = len(object_data)
+    for frame_count in range(n_frames):
+        x = object_data[frame_count]
+        x_robot = robot_data[frame_count]
         object_pcd.points = o3d.utility.Vector3dVector(x)
-        object_pcd.paint_uniform_color([0, 0, 1])
-        vis.add_geometry(object_pcd)
+        vis.update_geometry(object_pcd) 
 
-        view_control = vis.get_view_control()
-        camera_params = o3d.camera.PinholeCameraParameters()
-        intrinsic_parameter = o3d.camera.PinholeCameraIntrinsic(
-            width, height, intrinsic
+        cnt = 0
+        for i, dynamic_mesh in enumerate(dynamic_meshes):
+            vertices = x_robot[cnt : cnt + finger_vertex_counts[i]]
+            dynamic_mesh.vertices = o3d.utility.Vector3dVector(vertices)
+            cnt += finger_vertex_counts[i]
+
+        for i, dynamic_mesh in enumerate(dynamic_meshes):
+            vis.update_geometry(dynamic_mesh)
+
+        vis.poll_events()
+        vis.update_renderer()
+        static_image = np.asarray(
+            vis.capture_screen_float_buffer(do_render=True)
         )
-        camera_params.intrinsic = intrinsic_parameter
-        camera_params.extrinsic = w2c
-        view_control.convert_from_pinhole_camera_parameters(
-            camera_params, allow_arbitrary=True
-        )
+        static_image = (static_image * 255).astype(np.uint8)
 
-        # Initialize video writer
-        if not os.path.exists(output_dir):
-            os.makedirs(output_dir)
-        output_path = os.path.join(output_dir, f"{episode_id:06d}.mp4")
-        fourcc = cv2.VideoWriter_fourcc(*'avc1')
-        out = cv2.VideoWriter(output_path, fourcc, cfg.FPS, (width, height))
+        out.write(static_image)
 
-        n_frames = len(object_data)
-        for frame_count in range(n_frames):
-            x = object_data[frame_count]
-            x_robot = robot_data[frame_count]
-            object_pcd.points = o3d.utility.Vector3dVector(x)
-            vis.update_geometry(object_pcd) 
+        cv2.imshow("Generated Video", static_image)
+        cv2.waitKey(1)
 
-            cnt = 0
-            for i, dynamic_mesh in enumerate(dynamic_meshes):
-                vertices = x_robot[cnt : cnt + finger_vertex_counts[i]]
-                dynamic_mesh.vertices = o3d.utility.Vector3dVector(vertices)
-                cnt += finger_vertex_counts[i]
-
-            for i, dynamic_mesh in enumerate(dynamic_meshes):
-                vis.update_geometry(dynamic_mesh)
-
-            vis.poll_events()
-            vis.update_renderer()
-            static_image = np.asarray(
-                vis.capture_screen_float_buffer(do_render=True)
-            )
-            static_image = (static_image * 255).astype(np.uint8)
-
-            out.write(static_image)
-
-            cv2.imshow("Generated Video", static_image)
-            cv2.waitKey(1)
-
-        # Release video writer
-        out.release()
-        cv2.destroyAllWindows()
-        vis.destroy_window()
-        logger.info(f"Video saved to {output_path}")
+    # Release video writer
+    out.release()
+    cv2.destroyAllWindows()
+    vis.destroy_window()
+    logger.info(f"Video saved to {output_path}")
 
 
 if __name__ == "__main__":

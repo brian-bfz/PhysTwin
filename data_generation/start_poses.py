@@ -99,8 +99,6 @@ def init_phystwin(case_name):
     
     # Create trainer
     trainer = InvPhyTrainerWarp(
-        data_path=config.get_data_path(),
-        base_dir=str(config.case_paths['base_dir']),
         pure_inference_mode=True,
         static_meshes=[],
         robot_controller=config.get_robot_controller("default", n_ctrl_parts=1, device='cuda'),

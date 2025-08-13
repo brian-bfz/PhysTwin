@@ -18,7 +18,7 @@ from ...robot import RobotLoader, RobotController
 class PhysTwinConfig:
     """Centralized configuration management for PhysTwin system"""
     
-    def __init__(self, case_name: str, base_path: str = None, bg_img_path: str = None, gaussian_path: str = None, inference: bool = True, device: str = "cuda"):
+    def __init__(self, case_name: str, base_path: str = None, bg_img_path: str = None, gaussian_path: str = None, inference: bool = True, device: str = "cuda", train_frame = None):
         """
         Initialize configuration for a specific case
         
@@ -27,6 +27,7 @@ class PhysTwinConfig:
             base_path: Base path for data (defaults to DATA_DIFFERENT_TYPES)
             bg_img_path: Path to background image (defaults to DATA_BG_IMG)
             gaussian_path: Path to gaussian output directory (defaults to GAUSSIAN_OUTPUT_DIR)
+            train_frame: TBH, I don't know what this is for.
         """
         self.case_name = case_name
         self.base_path = base_path or str(DATA_DIFFERENT_TYPES)
@@ -40,6 +41,11 @@ class PhysTwinConfig:
         self._load_calibration_data()
         if inference: 
             self.setup_logging("inference_log")
+
+        cfg.data_path = self.get_data_path()
+        cfg.base_dir = self.get_temp_base_dir()
+        cfg.run_name = cfg.base_dir.split("/")[-1]
+        cfg.train_frame = train_frame
 
     def _setup_config(self, device) -> None:
         """Load case-specific configuration (cloth vs real)"""

@@ -24,6 +24,7 @@ seed = 42
 set_all_seeds(seed)
 
 if __name__ == "__main__":
+    raise NotImplementedError("This script has not been updated to use the new cfg interface.")
     parser = ArgumentParser()
     parser.add_argument("--base_path", type=str, required=True)
     parser.add_argument("--case_name", type=str, required=True)

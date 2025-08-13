@@ -76,8 +76,6 @@ if __name__ == "__main__":
 
     # Create trainer
     trainer = InvPhyTrainerWarp(
-        data_path=config.get_data_path(),
-        base_dir=config.get_temp_base_dir(),
         pure_inference_mode=True,
         static_meshes=static_meshes,
         robot_controller=config.get_robot_controller("interactive"),
