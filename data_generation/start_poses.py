@@ -7,7 +7,7 @@ import os
 import h5py
 import pickle
 from ..paths import GENERATED_DATA_DIR
-from .save_data import save_episode_data, save_last_frames
+from .save_data import *
 
 def create_push_action(grid_point, wait_frames):
     """
@@ -195,6 +195,7 @@ def generate_push_poses(config):
 
     # Save last frames to poses file
     save_last_frames(full_data_path, poses_data_path)
+    save_first_states(case_name, poses_data_path)
     return poses_data_path
 
 def generate_lift_poses(dg_config):
@@ -277,6 +278,7 @@ def generate_lift_poses(dg_config):
 
     # Save last frames to poses file
     save_last_frames(full_data_path, poses_data_path)
+    save_first_states(case_name, poses_data_path)
     return poses_data_path
     
 def visualize_poses(poses_data_path):

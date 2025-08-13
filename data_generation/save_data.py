@@ -152,3 +152,30 @@ def save_episode_data(data_file_path, episode_id, object_data, robot_data, grid_
             episode_group.attrs['finger_pos'] = finger_pos
     
     print(f"Saved episode {episode_id} to {data_file_path}: object {object_array.shape}, robot {robot_array.shape}")
+
+def save_first_states(case_name, poses_data_path):
+    from PhysTwin.qqtt.utils import PhysTwinConfig
+    from PhysTwin.qqtt import InvPhyTrainerWarp
+    config = PhysTwinConfig(case_name=case_name)
+    trainer = InvPhyTrainerWarp(
+        pure_inference_mode=True,
+        static_meshes=[],
+        robot_controller=config.get_robot_controller("default"),
+    )
+    first_object = trainer.init_vertices[:trainer.num_all_points].detach().cpu().numpy()
+    first_robot = trainer.robot_controller.dynamic_points.detach().cpu().numpy()
+    first_states = np.concatenate([first_object, first_robot], axis=0)
+
+    with h5py.File(poses_data_path, 'a') as f:
+        f.create_dataset('first_states', data=first_states)
+
+if __name__ == "__main__":
+    # This is a stopgap solution for pose files that are missing first states.
+    # In the future, start_poses.py will directly call save_first_states.
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--case_name", type=str, required=True)
+    parser.add_argument("--mode", type=str, choices=["push", "lift"], required=True)
+    args = parser.parse_args()
+    save_path = f'PhysTwin/generated_data/{args.case_name}/{args.mode}_poses.h5'
+    save_first_states(args.case_name, save_path)
