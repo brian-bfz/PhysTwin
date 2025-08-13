@@ -22,7 +22,7 @@ def save_last_frames(full_data_path, poses_data_path):
             episode_group = f[episode_key]
 
             finger_pos = episode_group.attrs['finger_pos']
-            if finger_pos > 0.8: # grasping failed, skip
+            if finger_pos > 0.5 or finger_pos < 0.1: # grasping failed, skip
                 continue 
 
             object_data = episode_group['object'][:]
@@ -42,7 +42,7 @@ def save_last_frames(full_data_path, poses_data_path):
     last_frames_robot = np.stack(last_frames_robot, axis=0)
     grid_points = np.stack(grid_points, axis=0)
     finger_poses = np.stack(finger_poses, axis=0)
-    print(grid_points.shape)
+    # print(grid_points.shape)
 
     # Save poses file with last frames
     with h5py.File(poses_data_path, 'w') as f:

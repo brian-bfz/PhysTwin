@@ -36,7 +36,7 @@ def create_push_action(grid_point, wait_frames):
     
     return push_action
 
-def create_lift_action(grid_point, wait_frames):
+def create_lift_action(grid_point, config):
     """
     Create an action function that positions the robot above a grid point, lowers to grasp, and stays stationary.
     
@@ -47,37 +47,38 @@ def create_lift_action(grid_point, wait_frames):
     Returns:
         function: Action function compatible with InvPhyTrainerWarp.generate_traj_from_act_func
     """
-    grid_point[2] += -0.005 # offset so robot doens't start too low. 
+    grid_point[2] += -0.005 # offset between robot center and lower end
     def lift_action(init_vertices, robot_controller, n_ctrl_parts):
-        # Total frames: approach + grasp + wait
-        approach_frames = 10
-        offset = -0.05 # z axis is reversed for phystwin
-        grasp_frames = 20
-        total_frames = approach_frames + grasp_frames + wait_frames
+        approach_end = config["approach"] 
+        grasp_end = approach_end + config["grasp"]
+        lift_end = grasp_end + config["lift"]
+        wait_end = lift_end + config["wait"]
         
         # Robot starts open (finger = 1.0)
         initial_finger = 1.0
-        finger_changes = torch.zeros(total_frames, dtype=torch.float32, device=robot_controller.device)
-        
-        # Close fingers during grasp phase
-        finger_changes[approach_frames:approach_frames + grasp_frames] = -0.05
+        target_changes = torch.zeros((wait_end, n_ctrl_parts, 3), dtype=torch.float32, device=robot_controller.device)
+        finger_changes = torch.zeros(wait_end, dtype=torch.float32, device=robot_controller.device)
         
         # Calculate initial translation to position robot above the point
         current_robot_center = robot_controller.get_current_center()
+
         # Position 0.1 units above the target point
         start_position = grid_point.clone()
-        start_position[2] += offset
+        start_position[2] += config["offset"]
         initial_translation = start_position - current_robot_center
-        
-        # Movement sequence: approach, grasp, wait
-        target_changes = torch.zeros((total_frames, n_ctrl_parts, 3), dtype=torch.float32, device=robot_controller.device)
-        
+                
         # Approach: move down to the target point
-        approach_speed = offset / approach_frames
-        target_changes[:approach_frames, 0, 2] = -approach_speed
+        approach_speed = config["offset"] / config["approach"]
+        target_changes[0:approach_end, 0, 2] = -approach_speed
         
         # Grasp: wait for gripper to close
+        finger_changes[approach_end:grasp_end] = -0.05
+
+        # Lift: lift sloth up
+        target_changes[grasp_end:lift_end, 0, 2] = approach_speed
+        
         # Wait: wait for object to stabilize
+        # Do nothing
         
         return initial_translation, target_changes, initial_finger, finger_changes
     
@@ -198,7 +199,7 @@ def generate_push_poses(config):
     save_last_frames(full_data_path, poses_data_path)
     return poses_data_path
 
-def generate_lift_poses(config):
+def generate_lift_poses(dg_config):
     """
     Generate a grid that spans the entire object with cell_size x cell_size cells
     For each grid point, find the object point that is directly below it
@@ -207,9 +208,8 @@ def generate_lift_poses(config):
     Save full trajectory to PhysTwin/generated_data/{case_name}/full_lift_poses.h5 (not used for training)
     Save last frame to PhysTwin/generated_data/{case_name}/lift_poses.h5 as an initial state for generating training data
     """
-    case_name = config["case_name"]
-    cell_size = config["cell_size"]
-    wait = config["wait"]
+    case_name = dg_config["case_name"]
+    cell_size = dg_config["cell_size"]
     
     print(f"Generating lift poses for case: {case_name}")
     
@@ -271,7 +271,7 @@ def generate_lift_poses(config):
         # Generate trajectory
         object_data, robot_data, gaussians_data, finger_pos = trainer.generate_traj_from_act_func(
             config.get_best_model_path(),
-            create_lift_action(grid_point, wait),
+            create_lift_action(grid_point, dg_config),
             config.get_gaussian_path(),
             n_ctrl_parts=1,
         )
