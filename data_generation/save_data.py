@@ -167,6 +167,8 @@ def save_first_states(case_name, poses_data_path):
     first_states = np.concatenate([first_object, first_robot], axis=0)
 
     with h5py.File(poses_data_path, 'a') as f:
+        if 'first_states' in f:
+            del f['first_states']
         f.create_dataset('first_states', data=first_states)
 
 if __name__ == "__main__":
