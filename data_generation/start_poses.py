@@ -326,7 +326,7 @@ def visualize_poses(poses_data_path):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--case_name", type=str, default=None)
-    parser.add_argument("--mode", type=str, choices=["push", "lift"], required=True)
+    parser.add_argument("--motion", type=str, choices=["push", "lift"], required=True)
     args = parser.parse_args()
 
     from GNN.utils import load_yaml
@@ -335,9 +335,9 @@ if __name__ == "__main__":
     if args.case_name is not None:
         config["case_name"] = args.case_name
     
-    if args.mode == "push":
+    if args.motion == "push":
         poses_data_path = generate_push_poses(config)
-    elif args.mode == "lift":
+    elif args.motion == "lift":
         poses_data_path = generate_lift_poses(config)
     # poses_data_path = "PhysTwin/generated_data/single_push_rope/lift_poses.h5"
 

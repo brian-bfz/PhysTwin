@@ -177,7 +177,7 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--case_name", type=str, required=True)
-    parser.add_argument("--mode", type=str, choices=["push", "lift"], required=True)
+    parser.add_argument("--motion", type=str, choices=["push", "lift"], required=True)
     args = parser.parse_args()
-    save_path = f'PhysTwin/generated_data/{args.case_name}/{args.mode}_poses.h5'
+    save_path = f'PhysTwin/generated_data/{args.case_name}/{args.motion}_poses.h5'
     save_first_states(args.case_name, save_path)

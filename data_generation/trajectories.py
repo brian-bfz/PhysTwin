@@ -298,7 +298,7 @@ if __name__ == "__main__":
     parser.add_argument("--n_episodes", type=int, required=True)
     parser.add_argument("--n_frames", type=int, default=None)
     parser.add_argument("--output_file", type=str, required=True)
-    parser.add_argument("--mode", type=str, choices=["push", "lift"], required=True)
+    parser.add_argument("--motion", type=str, choices=["push", "lift"], required=True)
     parser.add_argument("--video", action="store_true")
     args = parser.parse_args()
 
@@ -319,12 +319,12 @@ if __name__ == "__main__":
                     config, 
                     args.n_episodes // world_size + (1 if args.n_episodes % world_size > i else 0),
                     args.output_file, 
-                    args.mode, 
+                    args.motion, 
                     i
                 ) for i in range(world_size)
             ])
     else:
-        output_file = generate_data((config, args.n_episodes, args.output_file, args.mode, None))
+        output_file = generate_data((config, args.n_episodes, args.output_file, args.motion, None))
 
     if world_size > 1:
         from ..scripts.merge_dataset import merge_datasets
