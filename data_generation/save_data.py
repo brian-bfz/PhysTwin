@@ -1,13 +1,14 @@
 import h5py
 import numpy as np
 
-def save_last_frames(full_data_path, poses_data_path):
+def save_last_frames(full_data_path, poses_data_path, motion):
     """
     Save the last frame of each trajectory to a poses file.
     
     Args:
         full_data_path: str - Path to full trajectory data file
         poses_data_path: str - Path to save poses file
+        motion: str - "push" or "lift"
     """
     last_frames_object = []
     last_frames_robot = []
@@ -22,8 +23,9 @@ def save_last_frames(full_data_path, poses_data_path):
             episode_group = f[episode_key]
 
             finger_pos = episode_group.attrs['finger_pos']
-            if finger_pos > 0.5 or finger_pos < 0.1: # grasping failed, skip
-                continue 
+            if motion == "lift":
+                if finger_pos > 0.5 or finger_pos < 0.1: # grasping failed, skip
+                    continue 
 
             object_data = episode_group['object'][:]
             robot_data = episode_group['robot'][:]

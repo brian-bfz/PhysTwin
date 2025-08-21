@@ -194,7 +194,7 @@ def generate_push_poses(config):
         save_episode_data(full_data_path, i, object_data, robot_data, grid_point, finger_pos)
 
     # Save last frames to poses file
-    save_last_frames(full_data_path, poses_data_path)
+    save_last_frames(full_data_path, poses_data_path, "push")
     save_first_states(case_name, poses_data_path)
     return poses_data_path
 
@@ -277,7 +277,7 @@ def generate_lift_poses(dg_config):
         save_episode_data(full_data_path, i, object_data, robot_data, grid_point, finger_pos)
 
     # Save last frames to poses file
-    save_last_frames(full_data_path, poses_data_path)
+    save_last_frames(full_data_path, poses_data_path, "lift")
     save_first_states(case_name, poses_data_path)
     return poses_data_path
     
