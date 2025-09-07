@@ -44,7 +44,7 @@ class RobotLoader:
         self.transform = transform
         
         # Initialize SAPIEN and URDF
-        scene = sapien.Engine().create_scene()
+        scene = sapien.Engine().create_scene(systems=[sapien.physx.PhysxCpuSystem()])
         loader = scene.create_urdf_loader()
         self.sapien_robot = loader.load(urdf_path)
         self.robot_model = self.sapien_robot.create_pinocchio_model()
