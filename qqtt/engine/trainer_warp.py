@@ -14,26 +14,31 @@ from tqdm import tqdm
 import warp as wp
 import pickle
 import cv2
-
-from ...gaussian_splatting.scene.gaussian_model import GaussianModel
-from ...gaussian_splatting.scene.cameras import Camera
-from ...gaussian_splatting.gaussian_renderer import render as render_gaussian
-from ...gaussian_splatting.dynamic_utils import (
-    interpolate_motions_speedup,
-    knn_weights_sparse,
-    get_topk_indices,
-    calc_weights_vals_from_indices,
-)
-from ...gaussian_splatting.utils.graphics_utils import focal2fov
-from ...gs_render import (
-    remove_gaussians_with_low_opacity,
-)
-from ...gaussian_splatting.rotation_utils import quaternion_multiply, matrix_to_quaternion
-from ...paths import ASSETS_ROOT
-
 from sklearn.cluster import KMeans
 import copy
 import matplotlib.pyplot as plt
+
+try:
+    from ...gaussian_splatting.scene.gaussian_model import GaussianModel
+    from ...gaussian_splatting.scene.cameras import Camera
+    from ...gaussian_splatting.gaussian_renderer import render as render_gaussian
+    from ...gaussian_splatting.dynamic_utils import (
+        interpolate_motions_speedup,
+        knn_weights_sparse,
+        get_topk_indices,
+        calc_weights_vals_from_indices,
+    )
+    from ...gaussian_splatting.utils.graphics_utils import focal2fov
+    from ...gs_render import (
+        remove_gaussians_with_low_opacity,
+    )
+    from ...gaussian_splatting.rotation_utils import quaternion_multiply, matrix_to_quaternion
+    GS_AVAILABLE = True
+except Exception as e:
+    print(f"Failed to import Gaussian Splatting: {e}")
+    GS_AVAILABLE = False
+
+from ...paths import ASSETS_ROOT
 
 from GNN.model.rollout import Rollout
 from GNN.utils import visualize_edges, fps_rad_tensor, construct_edges_from_tensor
