@@ -299,11 +299,12 @@ if __name__ == "__main__":
     parser.add_argument("--n_frames", type=int, default=None)
     parser.add_argument("--output_file", type=str, required=True)
     parser.add_argument("--motion", type=str, choices=["push", "lift"], required=True)
+    parser.add_argument("--config", type=str, default=str(DATA_GENERATION / "config_single_push_rope.yaml"), help='Path to config file.')
     parser.add_argument("--video", action="store_true")
     args = parser.parse_args()
 
     from GNN.utils import load_yaml
-    config = load_yaml("PhysTwin/data_generation/config.yaml")
+    config = load_yaml(str(args.config))
     config = config["trajectory"]
     if args.n_frames is not None:
         config["n_frames"] = args.n_frames
