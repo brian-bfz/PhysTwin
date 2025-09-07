@@ -6,7 +6,7 @@ import numpy as np
 import os
 import h5py
 import pickle
-from ..paths import GENERATED_DATA_DIR
+from ..paths import GENERATED_DATA_DIR, DATA_GENERATION
 from .save_data import *
 
 def create_push_action(grid_point, wait_frames):
@@ -327,10 +327,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--case_name", type=str, default=None)
     parser.add_argument("--motion", type=str, choices=["push", "lift"], required=True)
+    parser.add_argument("--config", type=str, default=str(DATA_GENERATION / "config_single_push_rope.yaml"), help='Path to config file.')
     args = parser.parse_args()
 
     from GNN.utils import load_yaml
-    config = load_yaml("PhysTwin/data_generation/config.yaml")
+    config = load_yaml(str(args.config))
     config = config["start_pose"]
     if args.case_name is not None:
         config["case_name"] = args.case_name

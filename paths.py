@@ -14,6 +14,7 @@ ASSETS_ROOT = PHYSTWIN_ROOT / "assets"
 DATA_ROOT = PHYSTWIN_ROOT / "data"
 DATA_DIFFERENT_TYPES = DATA_ROOT / "different_types"
 DATA_BG_IMG = DATA_ROOT / "bg.png"
+DATA_GENERATION = PHYSTWIN_ROOT / "data_generation"
 
 # Config directories
 CONFIGS_ROOT = PHYSTWIN_ROOT / "configs"
