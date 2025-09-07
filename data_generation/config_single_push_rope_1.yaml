@@ -1,0 +1,26 @@
+start_pose:
+  case_name: single_push_rope_1
+  cell_size: 0.02
+  offset: -0.05 # lift
+  approach: 10 # lift
+  grasp: 20 # lift
+  lift: 20 # lift
+  wait: 10
+  margin: 0.16 # push
+  max_dist: 0.08 # push
+  min_dist: 0.03 # push
+
+trajectory: 
+  n_frames: 121
+  case_name: single_push_rope_1
+  speed:
+    min: 0.00333
+    max: 0.00667
+  pause_duration:
+    min: 0
+    max: 10
+  move_duration:
+    min: 30
+    max: 50
+  p_random: 0.2
+
