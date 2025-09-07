@@ -1,4 +1,4 @@
-start_pose: 
+start_pose:
   case_name: single_push_rope
   cell_size: 0.02
   offset: -0.05 # lift

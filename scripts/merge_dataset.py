@@ -1,6 +1,5 @@
 import h5py
 import argparse
-from shared.utils import parse_episodes
 import random
 import os
 from datetime import datetime
