@@ -73,11 +73,15 @@ class PhysTwin:
         else:
             interpolated_actions = action_seq
             
+        start_time = time.time()
         # Get actual deformation from PhysTwin 
         # print("Computing actual deformation with PhysTwin...")
         predicted_states = self.trainer.generate_traj_from_act_seq(
             initial_object_state, initial_robot_state, interpolated_actions, init_finger
         )  # [n_look_ahead * downsample_rate, n_particles, 3]
+
+        end_time = time.time()
+        print(f"Time to generate trajectory: {end_time - start_time} seconds")
             
         # Downsample predicted states back to GNN frame rate
         initial_state = torch.cat([initial_object_state, initial_robot_state], dim=0).unsqueeze(0) # [1, n_particles, 3]
