@@ -1048,16 +1048,12 @@ class InvPhyTrainerWarp:
         """
         # Initialize timer
         total_timer = Timer("Trajectory Generation")
-        frm_time = 0
-        smi_time = 0
-        ucg_time = 0
-        sis_time = 0
-        dt_time = 0
-        frm_timer = Timer("Fine robot movement")
-        smi_timer = Timer("Set mesh interactive")
         ucg_timer = Timer("Update collision graph")
-        sis_timer = Timer("Set init state")
+        cl_timer = Timer("Capture launch")
         dt_timer = Timer("Data transfer")
+        ucg_time = 0
+        cl_time = 0
+        dt_time = 0
 
         total_timer.start()
 
@@ -1084,7 +1080,6 @@ class InvPhyTrainerWarp:
             self.simulator.create_resting_case()
 
         for i in range(n_look_ahead):
-            frm_timer.start()
             # Apply robot translation using controller
             robot_translation = act_seq[i]
             
@@ -1095,8 +1090,6 @@ class InvPhyTrainerWarp:
                 finger_change=0.0,  # Fixed gripper opening
                 rot_change=None
             )
-            frm_time += frm_timer.stop()
-            smi_timer.start()
             # Update simulator with proper robot movement
             self.simulator.set_mesh_interactive(
                 movement_result['interpolated_dynamic_points'],
@@ -1104,38 +1097,35 @@ class InvPhyTrainerWarp:
                 movement_result['dynamic_velocity'],
                 movement_result['dynamic_omega'],
             )
-            smi_time += smi_timer.stop()
-            ucg_timer.start()
             # Run physics step with collision detection
+            ucg_timer.start()
             if self.simulator.object_collision_flag:
                 self.simulator.update_collision_graph()
+            ucg_time += ucg_timer.stop()
+            cl_timer.start()
             wp.capture_launch(self.simulator.forward_graph)
+            cl_time += cl_timer.stop()
+            dt_timer.start()
             collision_forces = wp.to_torch(
                 self.simulator.collision_forces, requires_grad=False
             )
-            ucg_time += ucg_timer.stop()
-            sis_timer.start()
+            dt_time += dt_timer.stop()
             # Update simulator state for next step
             self.simulator.set_init_state(
                 self.simulator.wp_states[-1].wp_x,
                 self.simulator.wp_states[-1].wp_v,
             )
-            sis_time += sis_timer.stop()
-            dt_timer.start()
             # Get new object state
             x = wp.to_torch(self.simulator.wp_states[-1].wp_x, requires_grad=False)
 
             # Combine object and robot states (use final robot position)
             combined_state = torch.cat([x, movement_result['interpolated_dynamic_points'][-1]], dim=0)
             predicted_states[i] = combined_state
-            dt_time += dt_timer.stop()
         # Stop timer and log timing info
         total_time = total_timer.stop()
         logger.info(f"Trajectory generation completed in {total_time:.3f} seconds")
-        logger.info(f"Fine robot movement time: {frm_time:.3f} seconds")
-        logger.info(f"Set mesh interactive time: {smi_time:.3f} seconds")
         logger.info(f"Update collision graph time: {ucg_time:.3f} seconds")
-        logger.info(f"Set init state time: {sis_time:.3f} seconds")
+        logger.info(f"Capture launch time: {cl_time:.3f} seconds")
         logger.info(f"Data transfer time: {dt_time:.3f} seconds")
         return predicted_states  # [n_look_ahead, n_particles, 3]
     
