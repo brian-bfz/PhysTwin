@@ -1,3 +1,4 @@
+import sapien
 from ..qqtt import InvPhyTrainerWarp
 from ..qqtt.utils import PhysTwinConfig
 import torch
