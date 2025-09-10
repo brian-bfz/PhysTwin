@@ -1,3 +1,4 @@
+import sapien
 from ..qqtt import InvPhyTrainerWarp
 from ..qqtt.utils import PhysTwinConfig
 import torch
@@ -65,7 +66,6 @@ class PhysTwin:
             actual_trajectory: [n_look_ahead*downsample_rate+1, n_particles, 3] - actual deformation trajectory at GNN frame rate
             downsampled_indices: [n_look_ahead+1] - indices of the downsampled frames
         """
-        
         # Interpolate action sequence to match PhysTwin's native frame rate
         # GNN operates at downsampled rate, PhysTwin at original rate
         if self.downsample_rate > 1:
@@ -78,13 +78,13 @@ class PhysTwin:
         predicted_states = self.trainer.generate_traj_from_act_seq(
             initial_object_state, initial_robot_state, interpolated_actions, init_finger
         )  # [n_look_ahead * downsample_rate, n_particles, 3]
-            
+
         # Downsample predicted states back to GNN frame rate
         initial_state = torch.cat([initial_object_state, initial_robot_state], dim=0).unsqueeze(0) # [1, n_particles, 3]
         actual_trajectory = torch.cat([initial_state, predicted_states], dim=0)  # [n_look_ahead*downsample_rate+1, n_particles, 3]
         downsampled_indices = torch.arange(0, actual_trajectory.shape[0], self.downsample_rate, device=self.device)
         # print(f"Downsampled indices: {downsampled_indices}")
-                        
+
         return actual_trajectory, downsampled_indices
             
 def random_direction_3d(device='cpu'):

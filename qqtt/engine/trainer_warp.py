@@ -44,6 +44,43 @@ from GNN.model.rollout import Rollout
 from GNN.utils import visualize_edges, fps_rad_tensor, construct_edges_from_tensor
 from shared.utils import save_object_and_robot, get_simple_shadow
 
+import time
+
+class Timer:
+    def __init__(self, name):
+        self.name = name
+        self.elapsed = 0
+        self.start_time = None
+        self.cuda_start_event = None
+        self.cuda_end_event = None
+        self.use_cuda = torch.cuda.is_available()
+
+    def start(self):
+        if self.use_cuda:
+            torch.cuda.synchronize()
+            self.cuda_start_event = torch.cuda.Event(enable_timing=True)
+            self.cuda_end_event = torch.cuda.Event(enable_timing=True)
+            self.cuda_start_event.record()
+        self.start_time = time.time()
+
+    def stop(self):
+        if self.use_cuda:
+            self.cuda_end_event.record()
+            torch.cuda.synchronize()
+            self.elapsed = (
+                self.cuda_start_event.elapsed_time(self.cuda_end_event) / 1000
+            )  # convert ms to seconds
+        else:
+            self.elapsed = time.time() - self.start_time
+        return self.elapsed
+
+    def reset(self):
+        self.elapsed = 0
+        self.start_time = None
+        self.cuda_start_event = None
+        self.cuda_end_event = None
+
+
 class InvPhyTrainerWarp:
     def __init__(
         self,
@@ -999,10 +1036,10 @@ class InvPhyTrainerWarp:
     def generate_traj_from_act_seq(self, initial_object_state, initial_robot_state, act_seq, init_finger=0.0):
         """
         Generate a point cloud trajectory from a sequence of robot translations.
-        
+
         Args:
             initial_object_state: [n_obj, 3]
-            initial_robot_state: [n_bot, 3] 
+            initial_robot_state: [n_bot, 3]
             act_seq: [n_look_ahead, 2 or 3] - robot translation sequence
             init_finger: float - initial gripper opening
 
@@ -1025,7 +1062,7 @@ class InvPhyTrainerWarp:
             initial_state_warp,
             self.simulator.wp_init_velocities  # Reset velocities to zero
         )
-        
+
         predicted_states = torch.zeros(n_look_ahead, n_particles, 3, device=cfg.device)
         collision_forces = None
         if self.simulator.object_collision_flag:
@@ -1330,42 +1367,6 @@ class InvPhyTrainerWarp:
         self.snapshot_cooldown = 0
 
         ############## Temporary timer ##############
-        import time
-
-        class Timer:
-            def __init__(self, name):
-                self.name = name
-                self.elapsed = 0
-                self.start_time = None
-                self.cuda_start_event = None
-                self.cuda_end_event = None
-                self.use_cuda = torch.cuda.is_available()
-
-            def start(self):
-                if self.use_cuda:
-                    torch.cuda.synchronize()
-                    self.cuda_start_event = torch.cuda.Event(enable_timing=True)
-                    self.cuda_end_event = torch.cuda.Event(enable_timing=True)
-                    self.cuda_start_event.record()
-                self.start_time = time.time()
-
-            def stop(self):
-                if self.use_cuda:
-                    self.cuda_end_event.record()
-                    torch.cuda.synchronize()
-                    self.elapsed = (
-                        self.cuda_start_event.elapsed_time(self.cuda_end_event) / 1000
-                    )  # convert ms to seconds
-                else:
-                    self.elapsed = time.time() - self.start_time
-                return self.elapsed
-
-            def reset(self):
-                self.elapsed = 0
-                self.start_time = None
-                self.cuda_start_event = None
-                self.cuda_end_event = None
-
         sim_timer = Timer("Simulator")
         render_timer = Timer("Rendering")
         frame_timer = Timer("Frame Compositing")
