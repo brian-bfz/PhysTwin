@@ -1048,10 +1048,16 @@ class InvPhyTrainerWarp:
         """
         # Initialize timer
         total_timer = Timer("Trajectory Generation")
-        sm_timer = Timer("Set to match vertices")
-        sis_timer = Timer("Set to initial state")
-        crc_timer = Timer("Create resting case")
-        first_iter_timer = Timer("First iteration")
+        frm_time = 0
+        smi_time = 0
+        ucg_time = 0
+        sis_time = 0
+        dt_time = 0
+        frm_timer = Timer("Fine robot movement")
+        smi_timer = Timer("Set mesh interactive")
+        ucg_timer = Timer("Update collision graph")
+        sis_timer = Timer("Set init state")
+        dt_timer = Timer("Data transfer")
 
         total_timer.start()
 
@@ -1062,31 +1068,23 @@ class InvPhyTrainerWarp:
         n_particles = initial_object_state.shape[0] + initial_robot_state.shape[0]
         # print(act_seq)
 
-        sm_timer.start()
         # Reset robot to initial position (reconstruct from initial_robot_state)
         self.robot_controller.set_to_match_vertices(initial_robot_state, init_finger)
-        sm_time = sm_timer.stop()
 
-        sis_timer.start()
         # Reset simulator to initial object state
         initial_state_warp = wp.from_torch(initial_object_state.contiguous(), dtype=wp.vec3)
         self.simulator.set_init_state(
             initial_state_warp,
             self.simulator.wp_init_velocities  # Reset velocities to zero
         )
-        sis_time = sis_timer.stop()
 
-        crc_timer.start()
         predicted_states = torch.zeros(n_look_ahead, n_particles, 3, device=cfg.device)
         collision_forces = None
         if self.simulator.object_collision_flag:
             self.simulator.create_resting_case()
-        crc_time = crc_timer.stop()
 
         for i in range(n_look_ahead):
-            if i == 0:
-                first_iter_timer.start()
-
+            frm_timer.start()
             # Apply robot translation using controller
             robot_translation = act_seq[i]
             
@@ -1097,7 +1095,8 @@ class InvPhyTrainerWarp:
                 finger_change=0.0,  # Fixed gripper opening
                 rot_change=None
             )
-            
+            frm_time += frm_timer.stop()
+            smi_timer.start()
             # Update simulator with proper robot movement
             self.simulator.set_mesh_interactive(
                 movement_result['interpolated_dynamic_points'],
@@ -1105,7 +1104,8 @@ class InvPhyTrainerWarp:
                 movement_result['dynamic_velocity'],
                 movement_result['dynamic_omega'],
             )
-            
+            smi_time += smi_timer.stop()
+            ucg_timer.start()
             # Run physics step with collision detection
             if self.simulator.object_collision_flag:
                 self.simulator.update_collision_graph()
@@ -1113,31 +1113,30 @@ class InvPhyTrainerWarp:
             collision_forces = wp.to_torch(
                 self.simulator.collision_forces, requires_grad=False
             )
-            
+            ucg_time += ucg_timer.stop()
+            sis_timer.start()
             # Update simulator state for next step
             self.simulator.set_init_state(
                 self.simulator.wp_states[-1].wp_x,
                 self.simulator.wp_states[-1].wp_v,
             )
-        
+            sis_time += sis_timer.stop()
+            dt_timer.start()
             # Get new object state
             x = wp.to_torch(self.simulator.wp_states[-1].wp_x, requires_grad=False)
-            
+
             # Combine object and robot states (use final robot position)
             combined_state = torch.cat([x, movement_result['interpolated_dynamic_points'][-1]], dim=0)
             predicted_states[i] = combined_state
-
-            if i == 0:
-                first_iter_time = first_iter_timer.stop()
-
+            dt_time += dt_timer.stop()
         # Stop timer and log timing info
         total_time = total_timer.stop()
         logger.info(f"Trajectory generation completed in {total_time:.3f} seconds")
-        logger.info(f"Set to match vertices time: {sm_time:.3f} seconds")
-        logger.info(f"Set to initial state time: {sis_time:.3f} seconds")
-        logger.info(f"Create resting case time: {crc_time:.3f} seconds")
-        logger.info(f"First iteration time: {first_iter_time:.3f} seconds")
-
+        logger.info(f"Fine robot movement time: {frm_time:.3f} seconds")
+        logger.info(f"Set mesh interactive time: {smi_time:.3f} seconds")
+        logger.info(f"Update collision graph time: {ucg_time:.3f} seconds")
+        logger.info(f"Set init state time: {sis_time:.3f} seconds")
+        logger.info(f"Data transfer time: {dt_time:.3f} seconds")
         return predicted_states  # [n_look_ahead, n_particles, 3]
     
     def generate_traj_from_act_func(self, model_path, act_func, gs_path=None, n_ctrl_parts=1):
