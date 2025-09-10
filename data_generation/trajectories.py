@@ -65,37 +65,24 @@ class PhysTwin:
             actual_trajectory: [n_look_ahead*downsample_rate+1, n_particles, 3] - actual deformation trajectory at GNN frame rate
             downsampled_indices: [n_look_ahead+1] - indices of the downsampled frames
         """
-        import time
-        
         # Interpolate action sequence to match PhysTwin's native frame rate
         # GNN operates at downsampled rate, PhysTwin at original rate
-        start_time = time.time()
         if self.downsample_rate > 1:
             interpolated_actions = (action_seq / self.downsample_rate).repeat_interleave(self.downsample_rate, dim=0)  # [n_look_ahead * downsample_rate, 2]
         else:
             interpolated_actions = action_seq
-        end_time = time.time()
-        print(f"Preprocess time: {end_time - start_time:.6f} seconds")
             
-        start_time = time.time()
         # Get actual deformation from PhysTwin 
         # print("Computing actual deformation with PhysTwin...")
         predicted_states = self.trainer.generate_traj_from_act_seq(
             initial_object_state, initial_robot_state, interpolated_actions, init_finger
         )  # [n_look_ahead * downsample_rate, n_particles, 3]
 
-        end_time = time.time()
-        print(f"Generate trajectory time: {end_time - start_time:.6f} seconds")
-            
-        start_time = time.time()
         # Downsample predicted states back to GNN frame rate
         initial_state = torch.cat([initial_object_state, initial_robot_state], dim=0).unsqueeze(0) # [1, n_particles, 3]
         actual_trajectory = torch.cat([initial_state, predicted_states], dim=0)  # [n_look_ahead*downsample_rate+1, n_particles, 3]
         downsampled_indices = torch.arange(0, actual_trajectory.shape[0], self.downsample_rate, device=self.device)
         # print(f"Downsampled indices: {downsampled_indices}")
-
-        end_time = time.time()
-        print(f"Postprocess time: {end_time - start_time:.6f} seconds")
 
         return actual_trajectory, downsampled_indices
             
