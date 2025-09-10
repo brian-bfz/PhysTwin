@@ -294,20 +294,23 @@ def generate_data(args):
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--case_name", type=str, default=None)
     parser.add_argument("--n_episodes", type=int, required=True)
-    parser.add_argument("--n_frames", type=int, default=None)
     parser.add_argument("--output_file", type=str, required=True)
     parser.add_argument("--motion", type=str, choices=["push", "lift"], required=True)
-    parser.add_argument("--config", type=str, default=str(DATA_GENERATION / "config_single_push_rope.yaml"), help='Path to config file.')
+    parser.add_argument("--config", type=str, default=None)
+    parser.add_argument("--case_name", type=str, default=None)
     parser.add_argument("--video", action="store_true")
     args = parser.parse_args()
+
+    if args.config is None:
+        if args.case_name is None:
+            raise ValueError("Either config or case_name must be provided")
+        args.config = str(DATA_GENERATION / f"config_{args.case_name}.yaml")
 
     from GNN.utils import load_yaml
     config = load_yaml(str(args.config))
     config = config["trajectory"]
-    if args.n_frames is not None:
-        config["n_frames"] = args.n_frames
+
     if args.case_name is not None:
         config["case_name"] = args.case_name
     
