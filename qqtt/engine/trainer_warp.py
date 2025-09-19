@@ -1300,9 +1300,12 @@ class InvPhyTrainerWarp:
         )
         
         # Get the initial object state (which may have been updated by lift_pose)
-        initial_x = wp.to_torch(
-            self.simulator.wp_states[0].wp_x, requires_grad=False
-        ).clone()
+        if lift_pose is not None:
+            prev_x = wp.to_torch(
+                self.simulator.wp_states[0].wp_x, requires_grad=False
+            ).clone()
+        else: 
+            prev_x = None
 
         gaussians = GaussianModel(sh_degree=3)
         gaussians.load_ply(gs_path)
@@ -1310,27 +1313,7 @@ class InvPhyTrainerWarp:
         gaussians.isotropic = True
         current_pos = gaussians.get_xyz
         current_rot = gaussians.get_rotation
-        
-        # Update the Gaussian positions to match the new object state
-        if lift_pose is not None:
-            # Calculate the offset between original and new object positions
-            original_x = self.structure_points  # Original object positions
-            new_x = initial_x[:self.num_all_points]  # New object positions after lift_pose
-            
-            # Calculate transformation (for now, just use translation)
-            original_center = torch.mean(original_x, dim=0)
-            new_center = torch.mean(new_x, dim=0)
-            translation_offset = new_center - original_center
-            
-            # Apply translation to Gaussian positions
-            current_pos = current_pos + translation_offset
-            gaussians._xyz = current_pos
-            
-            logger.info(f"Updated Gaussian positions with translation offset: {translation_offset}")
-            
-            # Note: For the motion interpolation to work correctly, prev_x will be set to None 
-            # initially, and the system will start tracking motion from the first simulation step
-        
+                
         vis_cam_idx = 0
         FPS = cfg.FPS
         width, height = cfg.WH
@@ -1341,7 +1324,6 @@ class InvPhyTrainerWarp:
         bg_color = [1, 1, 1] if use_white_background else [0, 0, 0]
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
         view = self._create_gs_view(w2c, intrinsic, height, width)
-        prev_x = None
         relations = None
         weights = None
         image_path = cfg.bg_img_path
