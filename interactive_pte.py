@@ -60,6 +60,10 @@ if __name__ == "__main__":
     parser.add_argument(
         "--virtual_key", action="store_true", help="select this option if you are using rustdesk"
     )
+    parser.add_argument(
+        "--lift_pose", type=int, default=None,
+        help="Index of the lift pose to start from. Default: starting from a push pose."
+    )
     args = parser.parse_args()
 
     # Initialize configuration - this replaces ~80 lines of setup code
@@ -123,4 +127,5 @@ if __name__ == "__main__":
         virtual_key_input=args.virtual_key,
         gnn_model=gnn_model,
         gnn_config=gnn_config,
+        lift_pose=args.lift_pose,
     )

@@ -1279,10 +1279,19 @@ class InvPhyTrainerWarp:
 
         return object_frames, robot_frames, gaussians_frames, self.robot_controller.get_current_finger()
 
-    def interactive_robot(self, model_path, gs_path, n_ctrl_parts=1, inv_ctrl=False, virtual_key_input=False, gnn_model=None, gnn_config=None):
+    def interactive_robot(self, model_path, gs_path, n_ctrl_parts=1, inv_ctrl=False, virtual_key_input=False, gnn_model=None, gnn_config=None, lift_pose=None):
         from pynput import keyboard
 
         self.initialize_simulator(model_path)
+
+        if lift_pose is not None:
+            from shared.utils import PickStartPose
+            pose_picker = PickStartPose(f"PhysTwin/generated_data/{self.case_name}/lift_poses.h5", cfg.device)
+            object_state, robot_state, _, init_finger = pose_picker(lift_pose)
+            object_state = object_state.to(cfg.device)
+            robot_state = robot_state.to(cfg.device)
+            self.robot_controller.set_to_match_vertices(robot_state, init_finger)
+            self.simulator.wp_init_vertices = wp.from_torch(object_state.contiguous(), dtype=wp.vec3)
 
         logger.info("Party Time Start!!!!")
         self.simulator.set_init_state(
