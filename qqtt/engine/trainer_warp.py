@@ -1284,6 +1284,7 @@ class InvPhyTrainerWarp:
 
         self.initialize_simulator(model_path)
 
+        # A hacky fix to allow PhysTwin to start from a lift pose
         if lift_pose is not None:
             from shared.utils import PickStartPose
             pose_picker = PickStartPose(f"PhysTwin/generated_data/{cfg.case_name}/lift_poses.h5", cfg.device)
@@ -1297,15 +1298,11 @@ class InvPhyTrainerWarp:
         self.simulator.set_init_state(
             self.simulator.wp_init_vertices, self.simulator.wp_init_velocities
         )
-        prev_x = wp.to_torch(
+        
+        # Get the initial object state (which may have been updated by lift_pose)
+        initial_x = wp.to_torch(
             self.simulator.wp_states[0].wp_x, requires_grad=False
         ).clone()
-
-        vis_cam_idx = 0
-        FPS = cfg.FPS
-        width, height = cfg.WH
-        intrinsic = cfg.intrinsics[vis_cam_idx]
-        w2c = cfg.w2cs[vis_cam_idx]
 
         gaussians = GaussianModel(sh_degree=3)
         gaussians.load_ply(gs_path)
@@ -1313,6 +1310,33 @@ class InvPhyTrainerWarp:
         gaussians.isotropic = True
         current_pos = gaussians.get_xyz
         current_rot = gaussians.get_rotation
+        
+        # Update the Gaussian positions to match the new object state
+        if lift_pose is not None:
+            # Calculate the offset between original and new object positions
+            original_x = self.structure_points  # Original object positions
+            new_x = initial_x[:self.num_all_points]  # New object positions after lift_pose
+            
+            # Calculate transformation (for now, just use translation)
+            original_center = torch.mean(original_x, dim=0)
+            new_center = torch.mean(new_x, dim=0)
+            translation_offset = new_center - original_center
+            
+            # Apply translation to Gaussian positions
+            current_pos = current_pos + translation_offset
+            gaussians._xyz = current_pos
+            
+            logger.info(f"Updated Gaussian positions with translation offset: {translation_offset}")
+            
+            # Note: For the motion interpolation to work correctly, prev_x will be set to None 
+            # initially, and the system will start tracking motion from the first simulation step
+        
+        vis_cam_idx = 0
+        FPS = cfg.FPS
+        width, height = cfg.WH
+        intrinsic = cfg.intrinsics[vis_cam_idx]
+        w2c = cfg.w2cs[vis_cam_idx]
+
         use_white_background = True  # set to True for white background
         bg_color = [1, 1, 1] if use_white_background else [0, 0, 0]
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
