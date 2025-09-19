@@ -1286,7 +1286,7 @@ class InvPhyTrainerWarp:
 
         if lift_pose is not None:
             from shared.utils import PickStartPose
-            pose_picker = PickStartPose(f"PhysTwin/generated_data/{self.case_name}/lift_poses.h5", cfg.device)
+            pose_picker = PickStartPose(f"PhysTwin/generated_data/{cfg.case_name}/lift_poses.h5", cfg.device)
             object_state, robot_state, _, init_finger = pose_picker(lift_pose)
             object_state = object_state.to(cfg.device)
             robot_state = robot_state.to(cfg.device)

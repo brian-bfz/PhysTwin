@@ -30,6 +30,7 @@ class PhysTwinConfig:
             train_frame: TBH, I don't know what this is for.
         """
         self.case_name = case_name
+        cfg.case_name = case_name
         self.base_path = base_path or str(DATA_DIFFERENT_TYPES)
         self.bg_img_path = bg_img_path or str(DATA_BG_IMG)
         self.gaussian_path = gaussian_path or str(GAUSSIAN_OUTPUT_DIR)
