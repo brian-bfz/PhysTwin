@@ -18,7 +18,7 @@ trajectory:
     max: 0.00667
   pause_duration:
     min: 0
-    max: 10
+    max: 50
   move_duration:
     min: 30
     max: 50
