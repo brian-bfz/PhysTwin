@@ -204,18 +204,18 @@ def generate_data(args):
     Generate training data using PhysTwin simulation for a given case.
     
     Args:
-        args: tuple - (case_name, n_episodes, n_frames, output_file, mode, rank)
+        args: tuple - (case_name, n_episodes, n_frames, output_file, motion, rank)
             case_name: str - case name for PhysTwin configuration
             n_episodes: int - number of episodes to generate
             n_frames: int - number of frames per episode
             output_file: str - output file name
-            mode: str - "push" or "lift" action mode
+            motion: str - "push" or "lift" action motion
             rank: int - GPU rank for multi-GPU processing (None for single GPU)
     Return:
         output_file: str - output file full path
     """
     torch.set_grad_enabled(False)
-    config, n_episodes, output_file, mode, rank = args
+    config, n_episodes, output_file, motion, rank = args
     case_name = config["case_name"]
     n_frames = config["n_frames"]
 
@@ -226,7 +226,7 @@ def generate_data(args):
     # print(device)
     phystwin = PhysTwin(case_name, device=device)
 
-    if mode == "push":
+    if motion == "push":
         input_file = f"PhysTwin/generated_data/{case_name}/push_poses.h5"
     else:
         input_file = f"PhysTwin/generated_data/{case_name}/lift_poses.h5"
@@ -242,10 +242,10 @@ def generate_data(args):
         robots = torch.from_numpy(f_in['robot'][:]).to(device)
         if 'finger' in f_in:
             fingers = f_in['finger'][:]
-        elif mode == "push":
+        elif motion == "push":
             fingers = np.zeros(objects.shape[0])
         else:
-            raise ValueError("Lift mode must have finger data")
+            raise ValueError("Lift motion must have finger data")
 
     # Progress bar setup
     pbar = None
@@ -264,7 +264,7 @@ def generate_data(args):
             n_bot = robot_vertices.shape[0]
 
             # Generate action sequence
-            if mode == "push":
+            if motion == "push":
                 act_seq = push_act_seq(config, object_vertices, robot_vertices)
             else:
                 act_seq = lift_act_seq(config, device)
@@ -281,7 +281,7 @@ def generate_data(args):
             episode_group.attrs['n_obj_particles'] = n_obj
             episode_group.attrs['n_bot_particles'] = n_bot
             episode_group.attrs['case_name'] = case_name
-            episode_group.attrs['mode'] = mode
+            episode_group.attrs['motion'] = motion
 
             if pbar is not None:
                 pbar.update(1)
